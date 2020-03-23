@@ -315,11 +315,11 @@ MonoBehaviour:
     m_DrawArea:
       serializedVersion: 2
       x: 0
-      y: 21
+      y: 0
       width: 1441
-      height: 634
+      height: 655
     m_Scale: {x: 1.0000001, y: 0.9999998}
-    m_Translation: {x: 720.5, y: 336.70316}
+    m_Translation: {x: 720.5, y: 347.20316}
     m_MarginLeft: 0
     m_MarginRight: 0
     m_MarginTop: 0
@@ -327,11 +327,11 @@ MonoBehaviour:
     m_LastShownAreaInsideMargins:
       serializedVersion: 2
       x: -720.49994
-      y: -336.70322
+      y: -347.20322
       width: 1440.9999
-      height: 634.0001
+      height: 655.0001
     m_MinimalGUI: 1
-  m_defaultScale: 0.8255208
+  m_defaultScale: 0.85286456
   m_LastWindowPixelSize: {x: 1441, y: 655}
   m_ClearInEditMode: 1
   m_NoCameraWarning: 1
@@ -367,9 +367,9 @@ MonoBehaviour:
   m_SceneHierarchy:
     m_TreeViewState:
       scrollPos: {x: 0, y: 0}
-      m_SelectedIDs: 70340000
-      m_LastClickedID: 13424
-      m_ExpandedIDs: f6c9ffff7cf3ffff26fbffff86340000
+      m_SelectedIDs: 
+      m_LastClickedID: 0
+      m_ExpandedIDs: 34fbffff823400008a340000
       m_RenameOverlay:
         m_UserAcceptedRename: 0
         m_Name: 
@@ -429,13 +429,13 @@ MonoBehaviour:
   m_PlayAudio: 0
   m_AudioPlay: 0
   m_Position:
-    m_Target: {x: 1658.2203, y: 389.09192, z: -239.99834}
+    m_Target: {x: 2407.0286, y: 247.15353, z: 817.28876}
     speed: 2
-    m_Value: {x: 1658.2203, y: 389.09192, z: -239.99834}
+    m_Value: {x: 2407.0286, y: 247.15353, z: 817.28876}
   m_RenderMode: 0
   m_CameraMode:
-    drawMode: 2
-    name: Shaded Wireframe
+    drawMode: 0
+    name: Shaded
     section: Shading Mode
   m_ValidateTrueMetals: 0
   m_DoValidateTrueMetals: 0
@@ -477,13 +477,13 @@ MonoBehaviour:
     m_GridAxis: 1
     m_gridOpacity: 0.5
   m_Rotation:
-    m_Target: {x: 0.15036546, y: 0.49560106, z: -0.08758141, w: 0.85097915}
+    m_Target: {x: 0.025670424, y: 0.9745735, z: -0.16165693, w: 0.15394257}
     speed: 2
-    m_Value: {x: 0.14908391, y: 0.49571547, z: -0.08683496, w: 0.85117555}
+    m_Value: {x: 0.025897508, y: 0.97419167, z: -0.16309549, w: 0.15388209}
   m_Size:
-    m_Target: 197.47523
+    m_Target: 83.235916
     speed: 2
-    m_Value: 197.47586
+    m_Value: 87.15803
   m_Ortho:
     m_Target: 0
     speed: 2
@@ -573,20 +573,20 @@ MonoBehaviour:
     m_SkipHidden: 0
     m_SearchArea: 1
     m_Folders:
-    - Assets
+    - Assets/Texture
   m_ViewMode: 1
   m_StartGridSize: 64
   m_LastFolders:
-  - Assets
+  - Assets/Texture
   m_LastFoldersGridSize: -1
   m_LastProjectPath: C:\Users\Rygar Nelson\Desktop\Uvat\Uvat\Uvat
   m_LockTracker:
     m_IsLocked: 0
   m_FolderTreeState:
     scrollPos: {x: 0, y: 90}
-    m_SelectedIDs: be340000
-    m_LastClickedID: 13502
-    m_ExpandedIDs: 00000000be340000c234000000ca9a3b
+    m_SelectedIDs: fa340000
+    m_LastClickedID: 13562
+    m_ExpandedIDs: 00000000ba34000000ca9a3b
     m_RenameOverlay:
       m_UserAcceptedRename: 0
       m_Name: 
@@ -614,7 +614,7 @@ MonoBehaviour:
     scrollPos: {x: 0, y: 0}
     m_SelectedIDs: 
     m_LastClickedID: 0
-    m_ExpandedIDs: 00000000be340000
+    m_ExpandedIDs: 00000000ba340000
     m_RenameOverlay:
       m_UserAcceptedRename: 0
       m_Name: 
