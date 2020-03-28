@@ -45,3 +45,12 @@ The following packages were added:
   com.unity.ugui@1.0.0
 The following packages were updated:
   com.unity.postprocessing from version 2.1.4 to 2.3.0
+
+=== Sat Mar 28 15:47:50 2020
+
+Packages were changed.
+Update Mode: mergeDefaultDependencies
+
+The following packages were added:
+  com.unity.burst@1.1.2
+  com.unity.mathematics@1.1.0
