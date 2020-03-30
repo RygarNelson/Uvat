@@ -24,15 +24,15 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Normal0:
-        m_Texture: {fileID: 2800000, guid: 16c726889752b164d8ba2e759addc33b, type: 3}
+        m_Texture: {fileID: 2800000, guid: efea300f3bddcc24eb1c0925fe53a3c9, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Normal1:
-        m_Texture: {fileID: 2800000, guid: 79e27bc1b79648d48bc7224fe24fefa0, type: 3}
+        m_Texture: {fileID: 2800000, guid: 81202fbcff226f340b9b9ea3882623da, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Normal2:
-        m_Texture: {fileID: 0}
+        m_Texture: {fileID: 2800000, guid: 8f494ae06438ba04ebdef65f5a9bda2c, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Normal3:
@@ -40,15 +40,15 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Splat0:
-        m_Texture: {fileID: 2800000, guid: cd8c7ac4cf605644fad67a40e34fcc4a, type: 3}
+        m_Texture: {fileID: 2800000, guid: 8722dec243b6cb94fa2f7ea1bbc94dd6, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Splat1:
-        m_Texture: {fileID: 2800000, guid: 818c958f6851d6c429cf45b828733020, type: 3}
+        m_Texture: {fileID: 2800000, guid: 6031fd2de33c0cd44b0f79201b191005, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Splat2:
-        m_Texture: {fileID: 0}
+        m_Texture: {fileID: 2800000, guid: 255d16c6118032d498539c727a579dc6, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _Splat3:
@@ -64,7 +64,7 @@ Material:
     - _Smoothness1: 0
     - _Smoothness2: 0
     - _Smoothness3: 0
-    - _normalScale0: 1
+    - _normalScale0: 4
     - _normalScale1: 1
     - _normalScale2: 1
     - _normalScale3: 1
@@ -80,8 +80,8 @@ Material:
     - _tiles0y: 0.06666667
     - _tiles1x: 0.1
     - _tiles1y: 0.1
-    - _tiles2x: 0.03
-    - _tiles2y: 0.03
+    - _tiles2x: 0.5
+    - _tiles2y: 0.5
     - _tiles3x: 0.03
     - _tiles3y: 0.03
     m_Colors:
