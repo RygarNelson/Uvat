@@ -23,10 +23,10 @@ Material:
   m_Name: Water
   m_Shader: {fileID: -6465566751694194690, guid: 936801d9f48ed634ea03a837252837d3,
     type: 3}
-  m_ShaderKeywords: _MATERIAL_FEATURE_TRANSMISSION _NORMALMAP _NORMALMAP_TANGENT_SPACE
+  m_ShaderKeywords: _DOUBLESIDED_ON
   m_LightmapFlags: 4
   m_EnableInstancingVariants: 1
-  m_DoubleSidedGI: 0
+  m_DoubleSidedGI: 1
   m_CustomRenderQueue: 2000
   stringTagMap:
     MotionVector: User
@@ -169,7 +169,7 @@ Material:
     - Vector1_A8100DE7: 0.8
     - Vector1_AE8CDE4B: 0.22
     - Vector1_BFC0319B: 0.14
-    - Vector1_D7555F9C: 1.299
+    - Vector1_D7555F9C: 0.96
     - Vector1_D958705D: 0.01
     - Vector1_DFD3567: 0.01
     - Vector1_E5C822F8: 1
@@ -189,8 +189,8 @@ Material:
     - _Anisotropy: 0
     - _BlendMode: 0
     - _CoatMask: 0
-    - _CullMode: 2
-    - _CullModeForward: 2
+    - _CullMode: 0
+    - _CullModeForward: 0
     - _Cutoff: 0.5
     - _DepthOffsetEnable: 0
     - _DetailAlbedoScale: 1
@@ -215,8 +215,8 @@ Material:
     - _DistortionSrcBlend: 1
     - _DistortionVectorBias: -1
     - _DistortionVectorScale: 2
-    - _DoubleSidedEnable: 0
-    - _DoubleSidedNormalMode: 1
+    - _DoubleSidedEnable: 1
+    - _DoubleSidedNormalMode: 0
     - _Drag: 1
     - _DstBlend: 0
     - _EmissiveColorMode: 1
@@ -306,19 +306,19 @@ Material:
     m_Colors:
     - Color_10886699: {r: 1, g: 1, b: 1, a: 1}
     - Color_20D86FF4: {r: 0.2028302, g: 0.86308795, b: 1, a: 1}
-    - Color_8DF95E1F: {r: 0.1792453, g: 0.1792453, b: 0.1792453, a: 1}
-    - Color_A0995202: {r: 0.7735849, g: 0.7735849, b: 0.7735849, a: 0}
+    - Color_8DF95E1F: {r: 0.20714667, g: 0.29974514, b: 0.3301887, a: 1}
+    - Color_A0995202: {r: 0.6981132, g: 0.6981132, b: 0.6981132, a: 0}
     - Color_CAA16006: {r: 0.2924528, g: 0.2924528, b: 0.2924528, a: 0.9647059}
     - Color_EE211E74: {r: 1, g: 1, b: 1, a: 1}
-    - Color_F4D2E00B: {r: 0.3962264, g: 0.3962264, b: 0.3962264, a: 0}
+    - Color_F4D2E00B: {r: 0.33962262, g: 0.33962262, b: 0.33962262, a: 0}
     - Vector2_301C2E72: {r: 18.24, g: 5, b: 0, a: 0}
-    - Vector2_6E1E59F4: {r: 300, g: 300, b: 0, a: 0}
+    - Vector2_6E1E59F4: {r: 40, g: 40, b: 0, a: 0}
     - Vector2_8C6E54F5: {r: 39.82, g: 20, b: 0, a: 0}
     - _BaseColor: {r: 0.6886792, g: 0.6886792, b: 0.6886792, a: 1}
     - _BaseColorMap_MipInfo: {r: 0, g: 0, b: 0, a: 0}
     - _Color: {r: 0.6886792, g: 0.6886792, b: 0.6886792, a: 1}
     - _DiffusionProfileAsset: {r: 0, g: 0, b: 0, a: 0}
-    - _DoubleSidedConstants: {r: 1, g: 1, b: -1, a: 0}
+    - _DoubleSidedConstants: {r: -1, g: -1, b: -1, a: 0}
     - _EmissionColor: {r: 1, g: 1, b: 1, a: 1}
     - _EmissiveColor: {r: 0, g: 0, b: 0, a: 1}
     - _EmissiveColorLDR: {r: 0, g: 0, b: 0, a: 1}
