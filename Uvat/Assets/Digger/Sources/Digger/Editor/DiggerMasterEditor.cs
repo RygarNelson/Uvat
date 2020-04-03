@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using Digger.TerrainCutters;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -11,10 +12,15 @@ namespace Digger
     [CustomEditor(typeof(DiggerMaster))]
     public class DiggerMasterEditor : Editor
     {
+        private const float raycastLength = 2000f;
+        
         private DiggerMaster master;
         private DiggerSystem[] diggerSystems;
 
         private bool clicking;
+        private bool keepingHeight;
+        private float keptHeight;
+        private bool warnedAboutPlayMode;
 
         private GameObject reticleSphere;
         private GameObject reticleHalfSphere;
@@ -35,6 +41,11 @@ namespace Digger
         private float opacity {
             get => EditorPrefs.GetFloat("diggerMaster_opacity", 0.3f);
             set => EditorPrefs.SetFloat("diggerMaster_opacity", value);
+        }
+
+        private bool opacityIsTarget {
+            get => EditorPrefs.GetBool("diggerMaster_opacityIsTarget", false);
+            set => EditorPrefs.SetBool("diggerMaster_opacityIsTarget", value);
         }
 
         private float size {
@@ -62,14 +73,15 @@ namespace Digger
             set => EditorPrefs.SetInt("diggerMaster_textureIndex", value);
         }
 
+        private MicroSplatPaintType paintType {
+            get => (MicroSplatPaintType) EditorPrefs.GetInt("diggerMaster_microSplatPaintType",
+                (int) MicroSplatPaintType.Texture);
+            set => EditorPrefs.SetInt("diggerMaster_microSplatPaintType", (int) value);
+        }
+
         private bool cutDetails {
             get => EditorPrefs.GetBool("diggerMaster_cutDetails", true);
             set => EditorPrefs.SetBool("diggerMaster_cutDetails", value);
-        }
-
-        private static bool PersistModificationsInPlayMode {
-            get => EditorPrefs.GetBool(DiggerMaster.PersistModificationsInPlayModeEditorKey, true);
-            set => EditorPrefs.SetBool(DiggerMaster.PersistModificationsInPlayModeEditorKey, value);
         }
 
         private int activeTab {
@@ -77,15 +89,23 @@ namespace Digger
             set => EditorPrefs.SetInt("diggerMaster_activeTab", value);
         }
 
-        private bool UseSRP => GraphicsSettings.renderPipelineAsset != null;
+        private static string GetReticleLabel(string label)
+        {
+            if (GraphicsSettings.renderPipelineAsset == null) {
+                return label;
+            }
+
+            if (GraphicsSettings.renderPipelineAsset.name.Contains("HDRenderPipeline")) {
+                return label + "HDRP";
+            }
+
+            return label + "SRP";
+        }
 
         private GameObject ReticleSphere {
             get {
                 if (!reticleSphere) {
-                    var prefab = LoadAssetWithLabel(
-                        UseSRP
-                            ? "Digger_SphereReticleSRP"
-                            : "Digger_SphereReticle");
+                    var prefab = LoadAssetWithLabel(GetReticleLabel("Digger_SphereReticle"));
                     reticleSphere = Instantiate(prefab);
                     reticleSphere.hideFlags = HideFlags.HideAndDontSave;
                 }
@@ -97,10 +117,7 @@ namespace Digger
         private GameObject ReticleCube {
             get {
                 if (!reticleCube) {
-                    var prefab = LoadAssetWithLabel(
-                        UseSRP
-                            ? "Digger_CubeReticleSRP"
-                            : "Digger_CubeReticle");
+                    var prefab = LoadAssetWithLabel(GetReticleLabel("Digger_CubeReticle"));
                     reticleCube = Instantiate(prefab);
                     reticleCube.hideFlags = HideFlags.HideAndDontSave;
                 }
@@ -112,10 +129,7 @@ namespace Digger
         private GameObject ReticleHalfSphere {
             get {
                 if (!reticleHalfSphere) {
-                    var prefab = LoadAssetWithLabel(
-                        UseSRP
-                            ? "Digger_HalfSphereReticleSRP"
-                            : "Digger_HalfSphereReticle");
+                    var prefab = LoadAssetWithLabel(GetReticleLabel("Digger_HalfSphereReticle"));
                     reticleHalfSphere = Instantiate(prefab);
                     reticleHalfSphere.hideFlags = HideFlags.HideAndDontSave;
                 }
@@ -127,10 +141,7 @@ namespace Digger
         private GameObject ReticleCone {
             get {
                 if (!reticleCone) {
-                    var prefab = LoadAssetWithLabel(
-                        UseSRP
-                            ? "Digger_ConeReticleSRP"
-                            : "Digger_ConeReticle");
+                    var prefab = LoadAssetWithLabel(GetReticleLabel("Digger_ConeReticle"));
                     reticleCone = Instantiate(prefab);
                     reticleCone.hideFlags = HideFlags.HideAndDontSave;
                 }
@@ -142,10 +153,7 @@ namespace Digger
         private GameObject ReticleCylinder {
             get {
                 if (!reticleCylinder) {
-                    var prefab = LoadAssetWithLabel(
-                        UseSRP
-                            ? "Digger_CylinderReticleSRP"
-                            : "Digger_CylinderReticle");
+                    var prefab = LoadAssetWithLabel(GetReticleLabel("Digger_CylinderReticle"));
                     reticleCylinder = Instantiate(prefab);
                     reticleCylinder.hideFlags = HideFlags.HideAndDontSave;
                 }
@@ -214,6 +222,10 @@ namespace Digger
             }
         }
 
+        private TerrainMaterialType MaterialType {
+            get { return diggerSystems.Select(digger => digger.MaterialType).FirstOrDefault(); }
+        }
+
         public void OnEnable()
         {
             master = (DiggerMaster) target;
@@ -232,6 +244,11 @@ namespace Digger
 #endif
             Undo.undoRedoPerformed -= UndoCallback;
             Undo.undoRedoPerformed += UndoCallback;
+
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload -= OnAfterAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
         }
 
         public void OnDisable()
@@ -242,6 +259,7 @@ namespace Digger
 #else
             SceneView.onSceneGUIDelegate -= OnScene;
 #endif
+
             if (reticleSphere)
                 DestroyImmediate(reticleSphere);
             if (reticleHalfSphere)
@@ -291,7 +309,7 @@ namespace Digger
             EditorGUILayout.HelpBox("Thanks for using Digger!\n\n" +
                                     "Need help? Checkout the documentation and join us on Discord to get support!\n\n" +
                                     "Want to help the developer and support the project? Please write a review on the Asset Store!",
-                                    MessageType.Info);
+                MessageType.Info);
 
 
             if (GUILayout.Button("Open documentation")) {
@@ -299,7 +317,6 @@ namespace Digger
             }
 
             if (GUILayout.Button("Write a review")) {
-                //Application.OpenURL("https://assetstore.unity.com/packages/tools/terrain/digger-pro-149753");
                 Application.OpenURL("https://assetstore.unity.com/packages/tools/terrain/digger-terrain-caves-overhangs-135178");
             }
 
@@ -317,7 +334,7 @@ namespace Digger
             EditorGUILayout.LabelField("Global Settings", EditorStyles.boldLabel);
             master.SceneDataFolder = EditorGUILayout.TextField("Scene data folder", master.SceneDataFolder);
             EditorGUILayout.HelpBox($"Digger data for this scene can be found in {master.SceneDataPath}",
-                                    MessageType.Info);
+                MessageType.Info);
             EditorGUILayout.HelpBox(
                 "Don\'t forget to backup this folder (including the \".internal\" folder) as well when you backup your project.",
                 MessageType.Warning);
@@ -339,8 +356,8 @@ namespace Digger
                 EditorApplication.RepaintHierarchyWindow();
                 if (showUnderlyingObjects) {
                     EditorUtility.DisplayDialog("Please reload scene",
-                                                "You need to reload the scene (or restart Unity) in order for this change to take full effect.",
-                                                "Ok");
+                        "You need to reload the scene (or restart Unity) in order for this change to take full effect.",
+                        "Ok");
                 }
             }
 
@@ -351,7 +368,7 @@ namespace Digger
 
             var newLayer = EditorGUILayout.LayerField("Layer", master.Layer);
             EditorGUILayout.HelpBox("You can change the layer of meshes/objects generated by Digger.",
-                                    MessageType.Info);
+                MessageType.Info);
             if (newLayer != master.Layer && EditorUtility.DisplayDialog(
                     $"Set new layer: {LayerMask.LayerToName(newLayer)}",
                     "Digger must recompute internal chunks for the new layer setting to take effect.\n\n" +
@@ -363,22 +380,22 @@ namespace Digger
 
             EditorGUILayout.Space();
             var newChunkSize = EditorGUILayout.IntPopup("Chunk size", master.ChunkSize, new[] {"16", "32", "64"},
-                                                        new[] {17, 33, 65});
+                new[] {17, 33, 65});
             EditorGUILayout.HelpBox(
                 "Lowering the size of chunks improves real-time editing performance, but also creates more meshes.",
                 MessageType.Info);
             if (newChunkSize != master.ChunkSize && EditorUtility.DisplayDialog("Change chunk size & clear everything",
-                                                                                "All modifications must be cleared for new chunk size to take effect.\n\n" +
-                                                                                "THIS WILL CLEAR ALL MODIFICATIONS MADE WITH DIGGER.\n" +
-                                                                                "This operation CANNOT BE UNDONE.\n\n" +
-                                                                                "Are you sure you want to proceed?", "Yes, clear it", "Cancel")) {
+                    "All modifications must be cleared for new chunk size to take effect.\n\n" +
+                    "THIS WILL CLEAR ALL MODIFICATIONS MADE WITH DIGGER.\n" +
+                    "This operation CANNOT BE UNDONE.\n\n" +
+                    "Are you sure you want to proceed?", "Yes, clear it", "Cancel")) {
                 master.ChunkSize = newChunkSize;
                 DoClear();
             }
 
             EditorGUILayout.Space();
             var newResolutionMult = EditorGUILayout.IntPopup("Resolution", master.ResolutionMult,
-                                                             new[] {"x1", "x2", "x4", "x8"}, new[] {1, 2, 4, 8});
+                new[] {"x1", "x2", "x4", "x8"}, new[] {1, 2, 4, 8});
             if (newResolutionMult != master.ResolutionMult && EditorUtility.DisplayDialog(
                     "Change resolution & clear everything",
                     "All modifications must be cleared for new resolution to take effect.\n\n" +
@@ -428,16 +445,15 @@ namespace Digger
             }
 
             if (master.CreateLODs) {
-
                 EditorGUILayout.LabelField("Screen Relative Transition Height of LODs:");
                 master.ScreenRelativeTransitionHeightLod0 = EditorGUILayout.Slider("    LOD 0",
-                                                                                   master.ScreenRelativeTransitionHeightLod0, 0.002f, 0.9f);
+                    master.ScreenRelativeTransitionHeightLod0, 0.002f, 0.9f);
                 master.ScreenRelativeTransitionHeightLod1 = EditorGUILayout.Slider("    LOD 1",
-                                                                                   master.ScreenRelativeTransitionHeightLod1, 0.001f,
-                                                                                   master.ScreenRelativeTransitionHeightLod0 - 0.001f);
+                    master.ScreenRelativeTransitionHeightLod1, 0.001f,
+                    master.ScreenRelativeTransitionHeightLod0 - 0.001f);
                 master.ColliderLodIndex = EditorGUILayout.IntSlider(
                     new GUIContent("Collider LOD",
-                                   "LOD that will hold the collider. Increasing it will produce mesh colliders with fewer vertices but also less accuracy."),
+                        "LOD that will hold the collider. Increasing it will produce mesh colliders with fewer vertices but also less accuracy."),
                     master.ColliderLodIndex, 0, 2);
             }
 
@@ -455,15 +471,26 @@ namespace Digger
 
                 action = (ActionType) EditorGUILayout.EnumPopup("Action", action);
 
+                if (MaterialType == TerrainMaterialType.MicroSplat && action == ActionType.Paint) {
+                    paintType = (MicroSplatPaintType) EditorGUILayout.EnumPopup("Type", paintType);
+                    opacityIsTarget = EditorGUILayout.Toggle("Opacity is target", opacityIsTarget);
+                }
+                else {
+                    paintType = MicroSplatPaintType.Texture;
+                    opacityIsTarget = false;
+                }
+
                 if (action != ActionType.Reset && action != ActionType.Smooth && action != ActionType.BETA_Sharpen) {
                     brush = (BrushType) EditorGUILayout.EnumPopup("Brush", brush);
-                } else if (action == ActionType.Smooth || action == ActionType.BETA_Sharpen) {
+                }
+                else if (action == ActionType.Smooth || action == ActionType.BETA_Sharpen) {
                     brush = BrushType.Sphere;
                 }
 
                 size = EditorGUILayout.Slider("Brush Size", size, 0.5f, 20f);
 
-                if (action != ActionType.Reset && action != ActionType.Smooth && action != ActionType.BETA_Sharpen && brush == BrushType.Stalagmite) {
+                if (action != ActionType.Reset && action != ActionType.Smooth && action != ActionType.BETA_Sharpen &&
+                    brush == BrushType.Stalagmite) {
                     coneHeight = EditorGUILayout.Slider("Stalagmite Height", coneHeight, 1f, 10f);
                     upsideDown = EditorGUILayout.Toggle("Upside Down", upsideDown);
                 }
@@ -474,18 +501,19 @@ namespace Digger
                 }
 
                 if (action != ActionType.Reset && action != ActionType.Smooth && action != ActionType.BETA_Sharpen) {
-                    GUIStyle gridList = "GridList";
-                    var errorMessage = new GUIContent("No texture to display.\n\n" +
-                                                      "You have to add some layers to the terrain with " +
-                                                      "BOTH a texture and a normal map. Then, click on 'Sync & Refresh'.");
-                    textureIndex = EditorUtils.AspectSelectionGrid(textureIndex, diggerSystem.TerrainTextures, 64,
-                                                                   gridList, errorMessage);
+                    if (paintType == MicroSplatPaintType.Texture) {
+                        GUIStyle gridList = "GridList";
+                        var errorMessage = new GUIContent("No texture to display.\n\n" +
+                                                          "You have to add at least one layer to the terrain with " +
+                                                          "both a texture and a normal map. Then, click on 'Sync & Refresh'.");
+                        if (MaterialType == TerrainMaterialType.CTS) {
+                            errorMessage =
+                                new GUIContent(
+                                    "CTS does not support vertex control. You can't choose which texture to paint. Texture will be picked-up from the terrain above.");
+                        }
 
-                    if (diggerSystem.Terrain.terrainData.terrainLayers.Length > DiggerSystem.MaxTextureCountSupported) {
-                        EditorGUILayout.HelpBox(
-                            $"Digger shader supports a maximum of {DiggerSystem.MaxTextureCountSupported} textures. " +
-                            $"Consequently, only the first {DiggerSystem.MaxTextureCountSupported} terrain layers can be used.",
-                            MessageType.Warning);
+                        textureIndex = EditorUtils.AspectSelectionGrid(textureIndex, diggerSystem.TerrainTextures, 64,
+                            gridList, errorMessage);
                     }
                 }
 
@@ -494,13 +522,15 @@ namespace Digger
 #else
                 cutDetails = EditorGUILayout.ToggleLeft("Auto-remove terrain details", cutDetails);
 #endif
+                if (action == ActionType.Paint && !opacityIsTarget) {
+                    EditorGUILayout.HelpBox(
+                        "Hold Ctrl to remove the texture instead of adding it.",
+                        MessageType.Info);
+                }
 
-                GUI.enabled = !Application.isPlaying;
-                PersistModificationsInPlayMode = EditorGUILayout.ToggleLeft(
-                    Application.isPlaying
-                        ? "Persist modifications in Play Mode (stop game to edit)"
-                        : "Persist modifications in Play Mode", PersistModificationsInPlayMode);
-                GUI.enabled = true;
+                EditorGUILayout.HelpBox(
+                    "Hold Shift to keep a constant height when editing.",
+                    MessageType.Info);
             }
 
             EditorGUILayout.Space();
@@ -512,18 +542,18 @@ namespace Digger
             EditorGUILayout.LabelField("Utils", EditorStyles.boldLabel);
 
             var doClear = GUILayout.Button("Clear") && EditorUtility.DisplayDialog("Clear",
-                                                                                   "This will clear all modifications made with Digger.\n" +
-                                                                                   "This operation CANNOT BE UNDONE.\n\n" +
-                                                                                   "Are you sure you want to proceed?", "Yes, clear it", "Cancel");
+                              "This will clear all modifications made with Digger.\n" +
+                              "This operation CANNOT BE UNDONE.\n\n" +
+                              "Are you sure you want to proceed?", "Yes, clear it", "Cancel");
             if (doClear) {
                 DoClear();
             }
 
             var doReload = GUILayout.Button("Sync & Refresh") && EditorUtility.DisplayDialog("Sync & Refresh",
-                                                                                             "This will recompute all modifications made with Digger. " +
-                                                                                             "This operation is not destructive, but can be long.\n\n" +
-                                                                                             "Are you sure you want to proceed?",
-                                                                                             "Yes, go ahead", "Cancel");
+                               "This will recompute all modifications made with Digger. " +
+                               "This operation is not destructive, but can be long.\n\n" +
+                               "Are you sure you want to proceed?",
+                               "Yes, go ahead", "Cancel");
             if (doReload) {
                 DoReload();
             }
@@ -532,15 +562,28 @@ namespace Digger
         private static void DoClear()
         {
             var diggers = FindObjectsOfType<DiggerSystem>();
-            foreach (var digger in diggers) {
-                digger.Clear();
+
+            try {
+                AssetDatabase.StartAssetEditing();
+                foreach (var digger in diggers) {
+                    digger.Clear();
+                }
+            }
+            finally {
+                AssetDatabase.StopAssetEditing();
             }
 
             AssetDatabase.Refresh();
 
-            foreach (var digger in diggers) {
-                DiggerSystemEditor.Init(digger, true);
-                Undo.ClearUndo(digger);
+            try {
+                AssetDatabase.StartAssetEditing();
+                foreach (var digger in diggers) {
+                    DiggerSystemEditor.Init(digger, true);
+                    Undo.ClearUndo(digger);
+                }
+            }
+            finally {
+                AssetDatabase.StopAssetEditing();
             }
 
             EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
@@ -550,9 +593,15 @@ namespace Digger
         private static void DoReload()
         {
             var diggers = FindObjectsOfType<DiggerSystem>();
-            foreach (var digger in diggers) {
-                DiggerSystemEditor.Init(digger, true);
-                Undo.ClearUndo(digger);
+            try {
+                AssetDatabase.StartAssetEditing();
+                foreach (var digger in diggers) {
+                    DiggerSystemEditor.Init(digger, true);
+                    Undo.ClearUndo(digger);
+                }
+            }
+            finally {
+                AssetDatabase.StopAssetEditing();
             }
 
             EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
@@ -570,42 +619,57 @@ namespace Digger
 
             if (!clicking && !e.alt && e.type == EventType.MouseDown && e.button == 0) {
                 clicking = true;
-            } else if (clicking && (e.type == EventType.MouseUp || e.type == EventType.MouseLeaveWindow || e.isKey ||
-                                    e.alt || EditorWindow.mouseOverWindow == null ||
-                                    EditorWindow.mouseOverWindow.GetType() != typeof(SceneView))) {
+            }
+            else if (clicking && (e.type == EventType.MouseUp || e.type == EventType.MouseLeaveWindow ||
+                                  (e.isKey && !e.control && !e.shift) ||
+                                  e.alt || EditorWindow.mouseOverWindow == null ||
+                                  EditorWindow.mouseOverWindow.GetType() != typeof(SceneView))) {
                 clicking = false;
-                if (!Application.isPlaying || PersistModificationsInPlayMode) {
+                if (!Application.isPlaying) {
                     foreach (var diggerSystem in diggerSystems) {
-                        diggerSystem.PersistAndRecordUndo();
+                        diggerSystem.PersistAndRecordUndo(false, action == ActionType.Reset);
                     }
                 }
             }
 
             var ray = HandleUtility.GUIPointToWorldRay(Event.current.mousePosition);
             var hit = GetIntersectionWithTerrainOrDigger(ray);
-            var hitTerrain = GetIntersectionWithTerrain(ray);
 
             if (hit.HasValue) {
                 var p = hit.Value.point + depth * ray.direction.normalized;
-                Reticle.transform.position = p;
-                Reticle.transform.localScale = 1.9f * size * Vector3.one;
-                Reticle.transform.rotation = Quaternion.identity;
-                if (action == ActionType.Reset) {
-                    Reticle.transform.localScale += 1000f * Vector3.up;
-                } else if (brush == BrushType.Stalagmite) {
-                    Reticle.transform.localScale = new Vector3(2f * size, 1f * coneHeight, 2f * size);
-                    if (upsideDown) {
-                        Reticle.transform.rotation = Quaternion.AngleAxis(180f, Vector3.right);
-                    }
+
+                if (!keepingHeight && e.shift) {
+                    keepingHeight = true;
+                    keptHeight = p.y;
+                }
+                else if (e.shift) {
+                    p.y = keptHeight;
+                }
+                else {
+                    keepingHeight = false;
                 }
 
-                if (clicking && (action != ActionType.Smooth && action != ActionType.BETA_Sharpen || !(hit.Value.collider is TerrainCollider) && (!hitTerrain.HasValue || Vector3.Distance(hitTerrain.Value.point, hit.Value.point) > 0.2f))) {
-                    if ((action == ActionType.Smooth || action == ActionType.BETA_Sharpen) && Application.isPlaying) {
-                        EditorUtility.DisplayDialog("Warning", "Smooth action cannot be used while Playing.", "Ok");
-                    } else {
+                UpdateReticlePosition(p);
+                var hitTerrain = GetIntersectionWithTerrain(ray);
+
+                if (clicking && IsActionAllowedHere(hit.Value, hitTerrain)) {
+                    if (Application.isPlaying) {
+                        if (!warnedAboutPlayMode) {
+                            warnedAboutPlayMode = true;
+                            EditorUtility.DisplayDialog("Edit in play mode not allowed",
+                                "Terrain cannot be edited by Digger while playing.\n\n" +
+                                "Note for Digger PRO: you *can* use DiggerMasterRuntime to edit the terrain while playing (so you can " +
+                                "test your gameplay), but modifications made in play mode won't be persisted.", "Ok");
+                        }
+                    }
+                    else {
+                        warnedAboutPlayMode = false;
                         foreach (var diggerSystem in diggerSystems) {
-                            diggerSystem.Modify(brush, action, opacity, p, size, coneHeight, upsideDown, textureIndex,
-                                                cutDetails);
+                            diggerSystem.Modify(brush, action,
+                                action == ActionType.Paint && e.control ? -opacity : opacity, p, size, coneHeight,
+                                upsideDown,
+                                GetFixedTextureIndex(),
+                                cutDetails, opacityIsTarget);
                         }
                     }
                 }
@@ -614,10 +678,54 @@ namespace Digger
             }
         }
 
+        private int GetFixedTextureIndex()
+        {
+            if (paintType == MicroSplatPaintType.Wetness) {
+                return 28;
+            }
+            else if (paintType == MicroSplatPaintType.Puddles) {
+                return 29;
+            }
+            else if (paintType == MicroSplatPaintType.Stream) {
+                return 30;
+            }
+            else if (paintType == MicroSplatPaintType.Lava) {
+                return 31;
+            }
+            else {
+                return textureIndex;
+            }
+        }
+
+        private bool IsActionAllowedHere(RaycastHit hit, RaycastHit? hitTerrain)
+        {
+            // Smooth action and Sharpen action can be done only on Digger meshes (not on the terrain)
+            return action != ActionType.Smooth && action != ActionType.BETA_Sharpen ||
+                   !(hit.collider is TerrainCollider) &&
+                   (!hitTerrain.HasValue || Vector3.Distance(hitTerrain.Value.point, hit.point) > 0.2f);
+        }
+
+        private void UpdateReticlePosition(Vector3 position)
+        {
+            var reticle = Reticle.transform;
+            reticle.position = position;
+            reticle.localScale = 1.9f * size * Vector3.one;
+            reticle.rotation = Quaternion.identity;
+            if (action == ActionType.Reset) {
+                reticle.localScale += 1000f * Vector3.up;
+            }
+            else if (brush == BrushType.Stalagmite) {
+                reticle.localScale = new Vector3(2f * size, 1f * coneHeight, 2f * size);
+                if (upsideDown) {
+                    reticle.rotation = Quaternion.AngleAxis(180f, Vector3.right);
+                }
+            }
+        }
+
         private static RaycastHit? GetIntersectionWithTerrainOrDigger(Ray ray)
         {
-            if (DiggerPhysics.Raycast(ray, out var hit, 1000f, Physics.DefaultRaycastLayers,
-                                      QueryTriggerInteraction.Ignore)) {
+            if (DiggerPhysics.Raycast(ray, out var hit, raycastLength, Physics.DefaultRaycastLayers,
+                QueryTriggerInteraction.Ignore)) {
                 return hit;
             }
 
@@ -626,8 +734,8 @@ namespace Digger
 
         private static RaycastHit? GetIntersectionWithTerrain(Ray ray)
         {
-            var hits = Physics.RaycastAll(ray, 1000f, Physics.DefaultRaycastLayers,
-                                          QueryTriggerInteraction.Ignore);
+            var hits = Physics.RaycastAll(ray, raycastLength, Physics.DefaultRaycastLayers,
+                QueryTriggerInteraction.Ignore);
             foreach (var hit in hits) {
                 if (hit.transform.GetComponent<Terrain>() != null) {
                     return hit;
@@ -652,45 +760,54 @@ namespace Digger
             var isCTS = false;
             var lightmapStaticWarn = false;
             var terrains = FindObjectsOfType<Terrain>();
-            foreach (var terrain in terrains) {
-                if (!terrain.gameObject.GetComponentInChildren<DiggerSystem>()) {
-                    var go = new GameObject("Digger");
-                    go.transform.parent = terrain.transform;
-                    go.transform.localPosition = Vector3.zero;
-                    go.transform.localRotation = Quaternion.identity;
-                    go.transform.localScale = Vector3.one;
-                    var digger = go.AddComponent<DiggerSystem>();
-                    DiggerSystemEditor.Init(digger, true);
-                    isCTS = isCTS || digger.MaterialType == TerrainMaterialType.CTS;
+            try {
+                AssetDatabase.StartAssetEditing();
+
+                foreach (var terrain in terrains) {
+                    var existingDiggers = terrain.gameObject.GetComponentsInChildren<DiggerSystem>();
+                    if (existingDiggers.Count(system => system.Terrain.GetInstanceID() == terrain.GetInstanceID()) ==
+                        0) {
+                        var go = new GameObject("Digger");
+                        go.transform.parent = terrain.transform;
+                        go.transform.localPosition = Vector3.zero;
+                        go.transform.localRotation = Quaternion.identity;
+                        go.transform.localScale = Vector3.one;
+                        var digger = go.AddComponent<DiggerSystem>();
+                        DiggerSystemEditor.Init(digger, true);
+                        isCTS = isCTS || digger.MaterialType == TerrainMaterialType.CTS;
 #if UNITY_2019_2_OR_NEWER
-                    lightmapStaticWarn =
- lightmapStaticWarn || GameObjectUtility.GetStaticEditorFlags(terrain.gameObject).HasFlag(StaticEditorFlags.ContributeGI);
+                        lightmapStaticWarn =
+     lightmapStaticWarn || GameObjectUtility.GetStaticEditorFlags(terrain.gameObject).HasFlag(StaticEditorFlags.ContributeGI);
 #else
-                    lightmapStaticWarn = lightmapStaticWarn || GameObjectUtility
-                                                               .GetStaticEditorFlags(terrain.gameObject)
-                                                               .HasFlag(StaticEditorFlags.LightmapStatic);
+                        lightmapStaticWarn = lightmapStaticWarn || GameObjectUtility
+                                                 .GetStaticEditorFlags(terrain.gameObject)
+                                                 .HasFlag(StaticEditorFlags.LightmapStatic);
 #endif
+                    }
                 }
+            }
+            finally {
+                AssetDatabase.StopAssetEditing();
             }
 
             EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
 
             if (lightmapStaticWarn) {
                 if (!EditorUtility.DisplayDialog("Warning - Lightmapping",
-                                                 "It is recommended to disable lightmapping on terrains " +
-                                                 "when using Digger. Otherwise there might be a visual difference between " +
-                                                 "Digger meshes and the terrains.\n\n" +
-                                                 "To disable lightmapping on a terrain, go to terrain settings and disable " +
-                                                 "'Lightmap Static' toggle.", "Ok", "Terrain settings?")) {
+                    "It is recommended to disable lightmapping on terrains " +
+                    "when using Digger. Otherwise there might be a visual difference between " +
+                    "Digger meshes and the terrains.\n\n" +
+                    "To disable lightmapping on a terrain, go to terrain settings and disable " +
+                    "'Lightmap Static' toggle.", "Ok", "Terrain settings?")) {
                     Application.OpenURL("https://docs.unity3d.com/Manual/terrain-OtherSettings.html");
                 }
             }
 
             if (isCTS) {
                 EditorUtility.DisplayDialog("Warning - CTS",
-                                            "Digger has detected CTS on your terrain(s) and has been setup accordingly.\n\n" +
-                                            "You may have to close the scene and open it again (or restart Unity) to " +
-                                            "force it to refresh before using Digger.", "Ok");
+                    "Digger has detected CTS on your terrain(s) and has been setup accordingly.\n\n" +
+                    "You may have to close the scene and open it again (or restart Unity) to " +
+                    "force it to refresh before using Digger.", "Ok");
             }
         }
 
@@ -698,9 +815,9 @@ namespace Digger
         public static void RemoveDiggerFromTerrains()
         {
             var confirm = EditorUtility.DisplayDialog("Remove Digger from the scene",
-                                                      "You are about to completely remove Digger from the scene and clear all related Digger data.\n\n" +
-                                                      "This operation CANNOT BE UNDONE.\n\n" +
-                                                      "Are you sure you want to proceed?", "Yes, remove Digger", "Cancel");
+                "You are about to completely remove Digger from the scene and clear all related Digger data.\n\n" +
+                "This operation CANNOT BE UNDONE.\n\n" +
+                "Are you sure you want to proceed?", "Yes, remove Digger", "Cancel");
             if (!confirm)
                 return;
 
@@ -725,26 +842,22 @@ namespace Digger
         public static void LoadAllChunks(Scene scene)
         {
             var diggers = FindObjectsOfTypeInScene<DiggerSystem>(scene);
-            foreach (var digger in diggers) {
-                digger.ReloadVersion();
-                digger.Reload(true, true);
-                digger.PersistAndRecordUndo();
-                Undo.ClearUndo(digger);
+            foreach (var diggerSystem in diggers) {
+                DiggerSystemEditor.Init(diggerSystem, false);
+                Undo.ClearUndo(diggerSystem);
             }
         }
 
         public static void OnEnterPlayMode(Scene scene)
         {
-            if (!PersistModificationsInPlayMode) {
-                var diggers = FindObjectsOfTypeInScene<DiggerSystem>(scene);
-                foreach (var digger in diggers) {
-                    Undo.ClearUndo(digger);
-                }
+            var diggers = FindObjectsOfTypeInScene<DiggerSystem>(scene);
+            foreach (var digger in diggers) {
+                Undo.ClearUndo(digger);
+            }
 
-                var cutters = FindObjectsOfTypeInScene<TerrainCutter>(scene);
-                foreach (var cutter in cutters) {
-                    cutter.OnEnterPlayMode();
-                }
+            var cutters = FindObjectsOfTypeInScene<TerrainCutter>(scene);
+            foreach (var cutter in cutters) {
+                cutter.OnEnterPlayMode();
             }
         }
 
@@ -762,18 +875,34 @@ namespace Digger
             return list;
         }
 
-        private static void CheckDiggerVersion()
+        [MenuItem("Tools/Digger/Upgrade Digger data")]
+        public static void CheckDiggerVersion()
         {
             var warned = false;
+            var warnedAboutLegacyFiles = false;
             var diggers = FindObjectsOfType<DiggerSystem>();
             foreach (var digger in diggers) {
-                if (digger.GetDiggerVersion() != DiggerSystem.DiggerVersion) {
+                if (Upgrading.HasLegacyFiles(digger)) {
+                    if (!warnedAboutLegacyFiles) {
+                        warnedAboutLegacyFiles = true;
+                        EditorUtility.DisplayDialog("Legacy Digger files detected",
+                            "Digger found some files in DiggerData folder that need to be upgraded. " +
+                            "Digger will attempt to upgrade them automatically. Current files will be backuped in {projectDir}/DiggerBackup\n\n" +
+                            "This may take a while.\n\nDon't forget to save your scene once this is done.",
+                            "Ok");
+                    }
+
+                    Upgrading.UpgradeDiggerData(digger);
+                    DiggerSystemEditor.Init(digger, true);
+                    Undo.ClearUndo(digger);
+                }
+                else if (digger.GetDiggerVersion() != DiggerSystem.DiggerVersion) {
                     if (!warned) {
                         warned = true;
                         EditorUtility.DisplayDialog("New Digger version",
-                                                    "Looks like Digger was updated. Digger is going to synchronize and reload all its data " +
-                                                    "to ensure compatibility. This may take a while.\n\nDon't forget to save your scene once this is done.",
-                                                    "Ok");
+                            "Looks like Digger was updated. Digger is going to synchronize and reload all its data " +
+                            "to ensure compatibility. This may take a while.\n\nDon't forget to save your scene once this is done.",
+                            "Ok");
                     }
 
                     DiggerSystemEditor.Init(digger, true);
@@ -781,7 +910,7 @@ namespace Digger
                 }
             }
 
-            if (warned) {
+            if (warned || warnedAboutLegacyFiles) {
                 EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
                 Undo.ClearAll();
             }
@@ -793,13 +922,27 @@ namespace Digger
             if (guids == null || guids.Length == 0) {
                 return null;
             }
-
+            
             // we loop but there should be only one item in the list
             foreach (var guid in guids) {
-                return AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
+                var asset = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guid));
+                var labels = AssetDatabase.GetLabels(asset);
+                if (labels != null && labels.Contains(label)) {
+                    return asset;
+                }
             }
 
             return null;
+        }
+
+        private void OnBeforeAssemblyReload()
+        {
+            NativeCollectionsPool.Instance.Dispose();
+        }
+        
+        private void OnAfterAssemblyReload()
+        {
+            CheckDiggerVersion();
         }
     }
 }

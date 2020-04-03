@@ -21,14 +21,15 @@ namespace Digger
         public Mesh Mesh => filter.sharedMesh;
 
         internal static ChunkObject Create(int lod,
-                                           Vector3i chunkPosition,
-                                           ChunkLODGroup chunkLodGroup,
-                                           bool hasCollider,
-                                           DiggerSystem digger,
-                                           Terrain terrain,
-                                           Material[] materials,
-                                           int layer)
+            Vector3i chunkPosition,
+            ChunkLODGroup chunkLodGroup,
+            bool hasCollider,
+            DiggerSystem digger,
+            Terrain terrain,
+            Material[] materials,
+            int layer)
         {
+            Utils.Profiler.BeginSample("ChunkObject.Create");
             var go = new GameObject(GetName(chunkPosition));
             go.layer = layer;
             go.hideFlags = digger.ShowDebug ? HideFlags.None : HideFlags.HideInHierarchy | HideFlags.HideInInspector;
@@ -71,30 +72,36 @@ namespace Digger
             }
 
             chunkObject.UpdateStaticEditorFlags(lod, digger.EnableOcclusionCulling);
+            
+            Utils.Profiler.EndSample();
             return chunkObject;
         }
 
         public void UpdateStaticEditorFlags(int lod, bool enableOcclusionCulling)
         {
 #if UNITY_EDITOR
-            isStatic = true;
-            var flags = StaticEditorFlags.ReflectionProbeStatic |
-                        StaticEditorFlags.OffMeshLinkGeneration;
 
-            if (lod == 1) {
-                flags |= StaticEditorFlags.NavigationStatic;
-            }
+                isStatic = true;
+                var flags = StaticEditorFlags.ReflectionProbeStatic |
+                            StaticEditorFlags.OffMeshLinkGeneration;
 
-            if (enableOcclusionCulling) {
-                flags |= StaticEditorFlags.OccludeeStatic |
-                         StaticEditorFlags.OccluderStatic;
-            }
+                if (lod == 1) {
+                    flags |= StaticEditorFlags.NavigationStatic;
+                }
 
-            if (meshRenderer != null && meshRenderer.sharedMaterials != null && meshRenderer.sharedMaterials.Length == 1) {
-                flags |= StaticEditorFlags.BatchingStatic;
-            }
+                if (enableOcclusionCulling) {
+                    flags |= StaticEditorFlags.OccludeeStatic |
+                             StaticEditorFlags.OccluderStatic;
+                }
 
-            GameObjectUtility.SetStaticEditorFlags(gameObject, flags);
+                if (meshRenderer != null && meshRenderer.sharedMaterials != null &&
+                    meshRenderer.sharedMaterials.Length == 1 && meshRenderer.sharedMaterials[0] != null &&
+                    !meshRenderer.sharedMaterials[0].enableInstancing) {
+                    flags |= StaticEditorFlags.BatchingStatic;
+                }
+
+                GameObjectUtility.SetStaticEditorFlags(gameObject, flags);
+
 #endif
         }
 
@@ -121,7 +128,8 @@ namespace Digger
             if (filter.sharedMesh && !isStatic) {
                 if (Application.isEditor && !Application.isPlaying) {
                     DestroyImmediate(filter.sharedMesh);
-                } else {
+                }
+                else {
                     Destroy(filter.sharedMesh);
                 }
             }
@@ -131,7 +139,8 @@ namespace Digger
                 filter.sharedMesh = visualMesh;
                 meshRenderer.enabled = true;
                 hasVisualMesh = true;
-            } else {
+            }
+            else {
                 filter.sharedMesh = null;
                 meshRenderer.enabled = false;
             }
@@ -143,7 +152,8 @@ namespace Digger
                     holeCollider.center = b.center;
                     holeCollider.size = b.size + Vector3.one * 2;
                     holeCollider.enabled = true;
-                } else {
+                }
+                else {
                     holeCollider.enabled = false;
                 }
 #endif
@@ -151,7 +161,8 @@ namespace Digger
                 if (meshCollider.sharedMesh) {
                     if (Application.isEditor && !Application.isPlaying) {
                         DestroyImmediate(meshCollider.sharedMesh);
-                    } else {
+                    }
+                    else {
                         Destroy(meshCollider.sharedMesh);
                     }
                 }
@@ -163,7 +174,8 @@ namespace Digger
 
                     meshCollider.sharedMesh = collisionMesh;
                     meshCollider.enabled = true;
-                } else {
+                }
+                else {
                     meshCollider.sharedMesh = null;
                     meshCollider.enabled = false;
                 }

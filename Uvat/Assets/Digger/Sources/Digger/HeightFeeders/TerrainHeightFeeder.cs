@@ -1,5 +1,4 @@
-﻿using System;
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace Digger.HeightFeeders
 {
@@ -8,14 +7,14 @@ namespace Digger.HeightFeeders
         private readonly TerrainData terrainData;
         private readonly int resolution;
         private readonly float resolutionInv;
-        private readonly int heightmapResolution;
+        private readonly float toUVs;
 
         public TerrainHeightFeeder(TerrainData terrainData, int resolution)
         {
             this.terrainData = terrainData;
             this.resolution = resolution;
             this.resolutionInv = 1f / resolution;
-            this.heightmapResolution = terrainData.heightmapResolution;
+            this.toUVs = 1f / (resolution * terrainData.heightmapResolution);
         }
 
         public float GetHeight(int x, int z)
@@ -35,19 +34,7 @@ namespace Digger.HeightFeeders
 
         public float GetVerticalNormal(int x, int z)
         {
-            var minNrmY = 1f;
-            var xr = x / resolution;
-            var zr = z / resolution;
-            for (var xx = -1; xx <= 1; ++xx) {
-                for (var zz = -1; zz <= 1; ++zz) {
-                    var nrm = terrainData.GetInterpolatedNormal((float) (xr + xx) / heightmapResolution,
-                        (float) (zr + zz) / heightmapResolution);
-
-                    minNrmY = Math.Min(minNrmY, Math.Abs(nrm.y));
-                }
-            }
-
-            return minNrmY;
+            return terrainData.GetInterpolatedNormal(x * toUVs, z * toUVs).y;
         }
     }
 }

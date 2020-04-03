@@ -1,26 +1,10 @@
-﻿using Unity.Collections;
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace Digger
 {
     public static class MarchingCubesTables
     {
-        public static NativeArray<int> NewEdgeTable()
-        {
-            return new NativeArray<int>(ConstEdgeTable, Allocator.TempJob);
-        }
-
-        public static NativeArray<int> NewTriTable()
-        {
-            return new NativeArray<int>(ConstTriTable, Allocator.TempJob);
-        }
-
-        public static NativeArray<Vector3> NewCorners()
-        {
-            return new NativeArray<Vector3>(ConstCorners, Allocator.TempJob);
-        }
-
-        private static readonly int[] ConstEdgeTable = new int[256]
+        public static readonly int[] ConstEdgeTable = new int[256]
         {
             0x0, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
             0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
@@ -56,7 +40,7 @@ namespace Digger
             0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0
         };
 
-        private static readonly int[] ConstTriTable = new int[256 * 16]
+        public static readonly int[] ConstTriTable = new int[256 * 16]
         {
             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
             0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -316,7 +300,7 @@ namespace Digger
             -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
         };
 
-        private static readonly Vector3[] ConstCorners = new Vector3[8]
+        public static readonly Vector3[] ConstCorners = new Vector3[8]
         {
             new Vector3(0, 0, 0),
             new Vector3(1, 0, 0),

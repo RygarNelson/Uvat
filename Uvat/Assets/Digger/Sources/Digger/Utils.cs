@@ -14,13 +14,22 @@ namespace Digger
             [Conditional("DIGGER_PROFILING")]
             public static void BeginSample(string name)
             {
-                UnityEngine.Profiling.Profiler.BeginSample(name);
+                UnityEngine.Profiling.Profiler.BeginSample("[Dig] " + name);
             }
 
             [Conditional("DIGGER_PROFILING")]
             public static void EndSample()
             {
                 UnityEngine.Profiling.Profiler.EndSample();
+            }
+        }
+
+        public static class D
+        {
+            [Conditional("DIGGER_DEBUGGING")]
+            public static void Log(string message)
+            {
+                UnityEngine.Debug.Log(message);
             }
         }
 

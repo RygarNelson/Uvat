@@ -24,7 +24,7 @@ namespace Digger
             var zi = index - xi * SizeVox2 - yi * SizeVox;
             var y = yi - 1;
             var height = Heights[xi * SizeVox + zi];
-            var voxel = new Voxel(y + ChunkAltitude - height, 0);
+            var voxel = new Voxel(y + ChunkAltitude - height);
             Voxels[index] = voxel;
         }
     }

@@ -10,6 +10,8 @@ namespace Digger.TerrainCutters
 {
     public class TerrainCutterLegacy : TerrainCutter
     {
+        private const int LargeFileBufferSize = 32768;
+
         [SerializeField] private DiggerSystem digger;
         [SerializeField] private Texture2D transparencyMap;
         [SerializeField] private Texture2D transparencyMapBackup;
@@ -20,7 +22,8 @@ namespace Digger.TerrainCutters
         public override void OnEnterPlayMode()
         {
 #if UNITY_EDITOR
-            transparencyMapBackup = new Texture2D(transparencyMap.width, transparencyMap.height) {filterMode = FilterMode.Point};
+            transparencyMapBackup = new Texture2D(transparencyMap.width, transparencyMap.height)
+                {filterMode = FilterMode.Point};
             transparencyMapBackup.SetPixels(transparencyMap.GetPixels());
             transparencyMapBackup.Apply();
             var transparencyMapPath = digger.GetTransparencyMapBackupPath();
@@ -111,7 +114,7 @@ namespace Digger.TerrainCutters
             }
         }
 
-        public override void Cut(CutEntry cutEntry, bool cutDetails)
+        public void Cut(CutEntry cutEntry, bool cutDetails)
         {
             if (cutEntry.RemoveDetailsOnly == 0)
                 transparencyMap.SetPixel(cutEntry.X, cutEntry.Z, Color.clear);
@@ -123,7 +126,7 @@ namespace Digger.TerrainCutters
             }
         }
 
-        public override void UnCut(int x, int z)
+        public void UnCut(int x, int z)
         {
             transparencyMap.SetPixel(x, z, Color.white);
         }
@@ -147,6 +150,9 @@ namespace Digger.TerrainCutters
                 Persist();
 
             switch (digger.MaterialType) {
+                case TerrainMaterialType.MicroSplat:
+                    SetMicroSplatAlphaHoleTexture(digger.Terrain, transparencyMap);
+                    break;
                 case TerrainMaterialType.CTS:
                     SetCTSCutoutMask(digger.Terrain, transparencyMap);
                     break;
@@ -164,7 +170,8 @@ namespace Digger.TerrainCutters
             if (!transparencyMap)
                 transparencyMap = CreateNewTransparencyMap();
 
-            using (Stream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+            using (Stream stream =
+                new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, LargeFileBufferSize)) {
                 using (var reader = new BinaryReader(stream, Encoding.Default)) {
                     var count = reader.ReadInt32();
                     var raw = reader.ReadBytes(count);
@@ -181,7 +188,8 @@ namespace Digger.TerrainCutters
                 if (!File.Exists(detPath))
                     continue;
 
-                using (Stream stream = new FileStream(detPath, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+                using (Stream stream = new FileStream(detPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                                                      LargeFileBufferSize)) {
                     using (var reader = new BinaryReader(stream, Encoding.Default)) {
                         for (var x = 0; x < detailLayer.GetLength(0); x += 1) {
                             for (var y = 0; y < detailLayer.GetLength(1); y += 1) {
@@ -217,18 +225,26 @@ namespace Digger.TerrainCutters
             if (!transparencyMap)
                 return;
 
+            Utils.Profiler.BeginSample("Save transparency map");
+            Utils.Profiler.BeginSample("GetRawTextureData");
             var raw = transparencyMap.GetRawTextureData();
-            using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Write)) {
+            Utils.Profiler.EndSample();
+            using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None,
+                                               LargeFileBufferSize)) {
                 using (var writer = new BinaryWriter(stream, Encoding.Default)) {
                     writer.Write(raw.Length);
                     writer.Write(raw);
                 }
             }
 
+            Utils.Profiler.EndSample();
+
+            Utils.Profiler.BeginSample("Save details map");
             for (var layer = 0; layer < detailMaps.Length; ++layer) {
                 var detailLayer = detailMaps[layer];
                 var detPath = $"{path}_det{layer}";
-                using (var stream = new FileStream(detPath, FileMode.Create, FileAccess.Write, FileShare.Write)) {
+                using (var stream = new FileStream(detPath, FileMode.Create, FileAccess.Write, FileShare.None,
+                                                   LargeFileBufferSize)) {
                     using (var writer = new BinaryWriter(stream, Encoding.Default)) {
                         for (var x = 0; x < detailLayer.GetLength(0); x += 1) {
                             for (var y = 0; y < detailLayer.GetLength(1); y += 1) {
@@ -239,10 +255,12 @@ namespace Digger.TerrainCutters
                 }
             }
 
+            Utils.Profiler.EndSample();
+
 #if !UNITY_EDITOR
             var treeInstances = digger.Terrain.terrainData.treeInstances;
             var treesPath = $"{path}_trees";
-            using (var stream = new FileStream(treesPath, FileMode.Create, FileAccess.Write, FileShare.Write)) {
+            using (var stream = new FileStream(treesPath, FileMode.Create, FileAccess.Write, FileShare.None)) {
                 using (var writer = new BinaryWriter(stream, Encoding.Default)) {
                     foreach (var treeInstance in treeInstances) {
                         writer.Write(treeInstance.widthScale);
@@ -293,6 +311,27 @@ namespace Digger.TerrainCutters
             }
 
             cts.ApplyMaterialAndUpdateShader();
+#endif
+        }
+
+        #endregion
+
+        #region MicroSplat
+
+        private void SetMicroSplatAlphaHoleTexture(Terrain terrain, Texture2D alphaHoleTexture)
+        {
+#if (__MICROSPLAT_DIGGER__ && __MICROSPLAT_ALPHAHOLE__)
+            var microSplat = terrain.GetComponent<MicroSplatTerrain>();
+            if (!microSplat) {
+                Debug.LogError($"Could not find MicroSplatTerrain on terrain {terrain.name}");
+                return;
+            }
+
+            if (microSplat.clipMap != alphaHoleTexture) {
+                Debug.Log("Syncing MicroSplat AlphaHole texture.");
+                microSplat.clipMap = alphaHoleTexture;
+                microSplat.Sync();
+            }
 #endif
         }
 

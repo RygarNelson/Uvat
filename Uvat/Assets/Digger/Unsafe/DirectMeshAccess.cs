@@ -8,7 +8,7 @@ public static unsafe class DirectMeshAccess
     public static readonly int[] TriangleArray = new int[65532];
     public static readonly Color[] ColorArray = new Color[65532];
     public static readonly Vector2[] Uv0Array = new Vector2[65532];
-    public static readonly int[] InfoArray = new int[65532];
+    public static readonly uint[] InfoArray = new uint[65532];
 
     public static void DirectSet(Mesh mesh, int vertexCount, int triangleCount)
     {

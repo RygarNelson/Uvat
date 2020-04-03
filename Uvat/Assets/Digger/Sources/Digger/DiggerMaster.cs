@@ -10,7 +10,6 @@ namespace Digger
 {
     public class DiggerMaster : MonoBehaviour
     {
-        public const string PersistModificationsInPlayModeEditorKey = "diggerMaster_persistModificationsInPlayMode";
         public const string ParentFolder = "DiggerData";
         public const string ScenesBaseFolder = "Scenes";
 
@@ -29,66 +28,66 @@ namespace Digger
         [SerializeField] private int layer = 0;
         [SerializeField] private bool enableOcclusionCulling = false;
 
-        private static string ParentPath => Path.Combine("Assets", ParentFolder);
+        private static string ParentPath {
+            get {
+                var projectDir = new DirectoryInfo(Application.dataPath);
+                if (projectDir.Exists && projectDir.Parent != null && projectDir.Parent.Exists) {
+                    Directory.SetCurrentDirectory(projectDir.Parent.FullName);
+                }
+
+                return Path.Combine("Assets", ParentFolder);
+            }
+        }
+
         private static string ScenesBasePath => Path.Combine(ParentPath, ScenesBaseFolder);
         public string SceneDataPath => Path.Combine(ScenesBasePath, sceneDataFolder);
 
-        public string SceneDataFolder
-        {
+        public string SceneDataFolder {
             get => sceneDataFolder;
             set => sceneDataFolder = value;
         }
 
-        public float ScreenRelativeTransitionHeightLod0
-        {
+        public float ScreenRelativeTransitionHeightLod0 {
             get => screenRelativeTransitionHeightLod0;
             set => screenRelativeTransitionHeightLod0 = value;
         }
 
-        public float ScreenRelativeTransitionHeightLod1
-        {
+        public float ScreenRelativeTransitionHeightLod1 {
             get => screenRelativeTransitionHeightLod1;
             set => screenRelativeTransitionHeightLod1 = value;
         }
 
-        public int ColliderLodIndex
-        {
+        public int ColliderLodIndex {
             get => colliderLodIndex;
             set => colliderLodIndex = value;
         }
 
-        public int ResolutionMult
-        {
+        public int ResolutionMult {
             get => resolutionMult;
             set => resolutionMult = value;
         }
 
-        public int ChunkSize
-        {
+        public int ChunkSize {
             get => chunkSize;
             set => chunkSize = value;
         }
 
-        public bool CreateLODs
-        {
+        public bool CreateLODs {
             get => createLODs;
             set => createLODs = value;
         }
 
-        public bool ShowUnderlyingObjects
-        {
+        public bool ShowUnderlyingObjects {
             get => showUnderlyingObjects;
             set => showUnderlyingObjects = value;
         }
 
-        public int Layer
-        {
+        public int Layer {
             get => layer;
             set => layer = value;
         }
 
-        public bool EnableOcclusionCulling
-        {
+        public bool EnableOcclusionCulling {
             get => enableOcclusionCulling;
             set => enableOcclusionCulling = value;
         }
@@ -96,23 +95,19 @@ namespace Digger
         public void CreateDirs()
         {
 #if UNITY_EDITOR
-            if (string.IsNullOrEmpty(sceneDataFolder))
-            {
+            if (string.IsNullOrEmpty(sceneDataFolder)) {
                 sceneDataFolder = SceneManager.GetActiveScene().name;
             }
 
-            if (!Directory.Exists(ParentPath))
-            {
+            if (!Directory.Exists(ParentPath)) {
                 AssetDatabase.CreateFolder("Assets", ParentFolder);
             }
 
-            if (!Directory.Exists(ScenesBasePath))
-            {
+            if (!Directory.Exists(ScenesBasePath)) {
                 AssetDatabase.CreateFolder(ParentPath, ScenesBaseFolder);
             }
 
-            if (!Directory.Exists(SceneDataPath))
-            {
+            if (!Directory.Exists(SceneDataPath)) {
                 AssetDatabase.CreateFolder(ScenesBasePath, sceneDataFolder);
             }
 #endif

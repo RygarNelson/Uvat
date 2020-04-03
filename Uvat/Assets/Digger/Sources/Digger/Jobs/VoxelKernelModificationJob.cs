@@ -24,9 +24,6 @@ namespace Digger
 
         public int ChunkAltitude;
         public int2 CutSize;
-        public float2 TerrainRelativePositionToHolePosition;
-        public float3 WorldPosition;
-        public sbyte TextureIndex;
 
         [ReadOnly] [NativeDisableParallelForRestriction]
         public NativeArray<Voxel> Voxels;
@@ -117,9 +114,13 @@ namespace Digger
 
         [ReadOnly] [NativeDisableParallelForRestriction]
         public NativeArray<Voxel> NeighborVoxelsRU_;
-
+        
+#if UNITY_2019_3_OR_NEWER
+        [WriteOnly] [NativeDisableParallelForRestriction] public NativeArray<int> Holes;
+#else
+        public float2 TerrainRelativePositionToHolePosition;
+        public float3 WorldPosition;
         [WriteOnly] public NativeCollections.NativeQueue<CutEntry>.Concurrent ToCut;
-#if !UNITY_2019_3_OR_NEWER
         [WriteOnly] public NativeCollections.NativeQueue<float3>.Concurrent ToTriggerBounds;
 #endif
 
@@ -148,40 +149,64 @@ namespace Digger
                     return; // never happens
             }
 
-            if (voxel.Altered != 0) {
-                var absAltered = Math.Abs(voxel.Altered);
-                if (Math.Abs(terrainHeightValue) <= 1f && Math.Abs(voxel.Value - terrainHeightValue) < 0.08f) {
-                    absAltered = 1;
-                } else if (absAltered >= Voxel.TextureOffset) {
+            if (voxel.Alteration != 0) {
+                if (voxel.IsAlteredFarSurface) {
                     var terrainNrm = VerticalNormals[xi * SizeVox + zi];
                     if (Math.Abs(terrainHeightValue) <= 1f / Math.Max(terrainNrm, 0.001f) + 0.5f) {
-                        absAltered = (sbyte) (absAltered - Voxel.TextureOffset + Voxel.TextureNearSurfaceOffset);
+                        voxel.Alteration = Voxel.NearAboveSurface;
                     }
                 }
 
                 if (voxel.Value > terrainHeightValue) {
-                    voxel.Altered = (sbyte) -absAltered;
+                    switch (voxel.Alteration) {
+                        case Voxel.FarAboveSurface:
+                            voxel.Alteration = Voxel.FarBelowSurface;
+                            break;
+                        case Voxel.NearAboveSurface:
+                            voxel.Alteration = Voxel.NearBelowSurface;
+                            break;
+                    }
                 } else {
-                    voxel.Altered = absAltered;
+                    switch (voxel.Alteration) {
+                        case Voxel.FarBelowSurface:
+                            voxel.Alteration = Voxel.FarAboveSurface;
+                            break;
+                        case Voxel.NearBelowSurface:
+                            voxel.Alteration = Voxel.NearAboveSurface;
+                            break;
+                    }
                 }
             }
 
             if (voxel.IsAlteredNearBelowSurface || voxel.IsAlteredNearAboveSurface) {
+#if UNITY_2019_3_OR_NEWER
+                for (var z = -CutSize.y; z < CutSize.y; ++z) {
+                    var pz = zi - 1 + z;
+                    if (pz >= 0 && pz < SizeOfMesh) {
+                        for (var x = -CutSize.x; x < CutSize.x; ++x) {
+                            var px = xi - 1 + x;
+                            if (px >= 0 && px < SizeOfMesh) {
+                                NativeCollections.Utils.IncrementAt(Holes, pz * SizeOfMesh + px);
+                            }
+                        }
+                    }
+                }
+#else
                 var pos = new float3((xi - 1) * HeightmapScale.x, (yi - 1), (zi - 1) * HeightmapScale.z);
-#if !UNITY_2019_3_OR_NEWER
                 ToTriggerBounds.Enqueue(pos);
-#endif
                 var wpos = pos + WorldPosition;
-                var pCut = new int3((int) (wpos.x * TerrainRelativePositionToHolePosition.x), (int) wpos.y, (int) (wpos.z * TerrainRelativePositionToHolePosition.y));
+                var pCut = new int3((int) (wpos.x * TerrainRelativePositionToHolePosition.x), (int) wpos.y,
+                    (int) (wpos.z * TerrainRelativePositionToHolePosition.y));
                 for (var x = -CutSize.x; x < CutSize.x; ++x) {
                     for (var z = -CutSize.y; z < CutSize.y; ++z) {
                         ToCut.Enqueue(new CutEntry(
-                                          pCut.x + x,
-                                          pCut.z + z,
-                                          voxel.IsAlteredNearAboveSurface
-                                      ));
+                            pCut.x + x,
+                            pCut.z + z,
+                            voxel.IsAlteredNearAboveSurface
+                        ));
                     }
                 }
+#endif
             }
 
             VoxelsOut[index] = voxel;
@@ -230,79 +255,74 @@ namespace Digger
             var voxel = Voxels[index];
 
             var voxelValue = 0f;
-            var absAlteredNeighbour = 0;
+            uint alterationNeighbour = 0;
             for (var x = xi - 1; x <= xi + 1; ++x) {
                 for (var y = yi - 1; y <= yi + 1; ++y) {
                     for (var z = zi - 1; z <= zi + 1; ++z) {
                         var vox = GetVoxelAt(x, y, z);
                         voxelValue += vox.Value;
-                        if (Math.Abs(vox.Altered) > absAlteredNeighbour)
-                            absAlteredNeighbour = Math.Abs(vox.Altered);
+                        if (vox.Alteration > alterationNeighbour)
+                            alterationNeighbour = vox.Alteration;
                     }
                 }
             }
             
-            if (voxel.IsAlteredOrNearSurface)
-                absAlteredNeighbour = Math.Abs(voxel.Altered);
+            if (voxel.IsAlteredFarOrNearSurface)
+                alterationNeighbour = voxel.Alteration;
             
-            if (absAlteredNeighbour <= 1)
+            if (alterationNeighbour <= Voxel.OnSurface)
                 return ComputeUnaltered(flatDistance, voxel);
             
             if (Math.Abs(terrainHeightValue) <= 4f && Math.Abs(voxelValue - terrainHeightValue) < 0.4f)
                 return ComputeUnaltered(flatDistance, voxel);
 
             const float by27 = 1f / 27f;
-            return ComputeAltered(distance, flatDistance, voxel, voxelValue * by27, absAlteredNeighbour);
+            return ComputeAltered(distance, flatDistance, voxel, voxelValue * by27, alterationNeighbour);
         }
         
         private Voxel ApplySharpen(int index, int xi, int yi, int zi, float distance, float flatDistance, float terrainHeightValue)
         {
             var voxel = Voxels[index];
-            if (Math.Abs(voxel.Altered) <= 1)
+            if (!voxel.IsAlteredFarOrNearSurface)
                 return voxel;
 
             var voxelValue = 0f;
-            var absAlteredNeighbour = 0;
-            voxelValue += VoxelValue(xi - 1, yi, zi, -1f, ref absAlteredNeighbour);
-            voxelValue += VoxelValue(xi + 1, yi, zi, -1f, ref absAlteredNeighbour);
-            voxelValue += VoxelValue(xi, yi - 1, zi, -1f, ref absAlteredNeighbour);
-            voxelValue += VoxelValue(xi, yi + 1, zi, -1f, ref absAlteredNeighbour);
-            voxelValue += VoxelValue(xi, yi, zi - 1, -1f, ref absAlteredNeighbour);
-            voxelValue += VoxelValue(xi, yi, zi + 1, -1f, ref absAlteredNeighbour);
+            uint alterationNeighbour = 0;
+            voxelValue += VoxelValue(xi - 1, yi, zi, -1f, ref alterationNeighbour);
+            voxelValue += VoxelValue(xi + 1, yi, zi, -1f, ref alterationNeighbour);
+            voxelValue += VoxelValue(xi, yi - 1, zi, -1f, ref alterationNeighbour);
+            voxelValue += VoxelValue(xi, yi + 1, zi, -1f, ref alterationNeighbour);
+            voxelValue += VoxelValue(xi, yi, zi - 1, -1f, ref alterationNeighbour);
+            voxelValue += VoxelValue(xi, yi, zi + 1, -1f, ref alterationNeighbour);
             voxelValue += voxel.Value * 7f;
             
-            if (voxel.IsAlteredOrNearSurface)
-                absAlteredNeighbour = Math.Abs(voxel.Altered);
+            if (voxel.IsAlteredFarOrNearSurface)
+                alterationNeighbour = voxel.Alteration;
 
             if (Math.Abs(terrainHeightValue) <= 4f && Math.Abs(voxelValue - terrainHeightValue) < 0.4f)
                 return ComputeUnaltered(flatDistance, voxel);
 
-            if (absAlteredNeighbour <= 1 || voxelValue <= 0f && voxel.Value >= 0f || voxelValue >= 0f && voxel.Value <= 0f || Math.Abs(voxelValue) < 0.001f || Math.Abs(voxelValue) > Math.Max(Math.Abs(voxel.Value)*2, 4f))
+            if (alterationNeighbour <= Voxel.OnSurface || voxelValue <= 0f && voxel.Value >= 0f || voxelValue >= 0f && voxel.Value <= 0f || Math.Abs(voxelValue) < 0.001f || Math.Abs(voxelValue) > Math.Max(Math.Abs(voxel.Value)*2, 4f))
                 return ComputeUnaltered(flatDistance, voxel);
             
-            return ComputeAltered(distance, flatDistance, voxel, voxelValue, absAlteredNeighbour);
+            return ComputeAltered(distance, flatDistance, voxel, voxelValue, alterationNeighbour);
         }
 
-        private float VoxelValue(int x, int y, int z, float weight, ref int absAlteredNeighbour)
+        private float VoxelValue(int x, int y, int z, float weight, ref uint alterationNeighbour)
         {
             var vox = GetVoxelAt(x, y, z);
-            if (Math.Abs(vox.Altered) > absAlteredNeighbour)
-                absAlteredNeighbour = Math.Abs(vox.Altered);
+            if (vox.Alteration > alterationNeighbour)
+                alterationNeighbour = vox.Alteration;
             return weight * vox.Value;
         }
 
-        private Voxel ComputeAltered(float distance, float flatDistance, Voxel voxel, float voxelValue, int absAlteredNeighbour)
+        private Voxel ComputeAltered(float distance, float flatDistance, Voxel voxel, float voxelValue, uint alterationNeighbour)
         {
             if (distance >= 0) {
                 voxel.Value = Mathf.Lerp(voxel.Value, voxelValue, Intensity);
-                if (absAlteredNeighbour >= Voxel.TextureNearSurfaceOffset && absAlteredNeighbour < Voxel.TextureOffset) {
-                    absAlteredNeighbour = absAlteredNeighbour - Voxel.TextureNearSurfaceOffset + Voxel.TextureOffset;
-                }
-
-                voxel.Altered = (sbyte) (absAlteredNeighbour);
-                
-            } else if (flatDistance > 0 && Math.Abs(voxel.Altered) < 3) {
-                voxel.Altered = 1;
+                voxel.Alteration = alterationNeighbour;
+            } else if (flatDistance > 0 && !voxel.IsAlteredFarOrNearSurface) {
+                voxel.Alteration = Voxel.OnSurface;
             }
 
             return voxel;
@@ -310,8 +330,8 @@ namespace Digger
         
         private Voxel ComputeUnaltered(float flatDistance, Voxel voxel)
         {
-            if (flatDistance > 0 && Math.Abs(voxel.Altered) < 3) {
-                voxel.Altered = 1;
+            if (flatDistance > 0 && !voxel.IsAlteredFarOrNearSurface) {
+                voxel.Alteration = Voxel.OnSurface;
             }
 
             return voxel;

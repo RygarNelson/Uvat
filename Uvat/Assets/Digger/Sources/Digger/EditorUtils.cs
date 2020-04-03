@@ -20,6 +20,15 @@ namespace Digger
 #endif
         }
 
+        public static bool MicroSplatExists(Terrain terrain)
+        {
+#if __MICROSPLAT_DIGGER__
+            return terrain.GetComponent<MicroSplatTerrain>();
+#else
+            return false;
+#endif
+        }
+
         public static T CreateOrReplaceAsset<T>(T asset, string path) where T : Object
         {
             Utils.Profiler.BeginSample("[Dig] EditorUtils.CreateOrReplaceAsset>LoadAssetAtPath");
@@ -31,7 +40,8 @@ namespace Digger
                 AssetDatabase.CreateAsset(asset, path);
                 Utils.Profiler.EndSample();
                 existingAsset = asset;
-            } else {
+            }
+            else {
                 Utils.Profiler.BeginSample("[Dig] EditorUtils.CreateOrReplaceAsset>CopySerialized");
                 EditorUtility.CopySerialized(asset, existingAsset);
                 Utils.Profiler.EndSample();
@@ -40,7 +50,8 @@ namespace Digger
             return existingAsset;
         }
 
-        public static int AspectSelectionGrid(int selected, Texture[] textures, int approxSize, GUIStyle style, GUIContent errorMessage)
+        public static int AspectSelectionGrid(int selected, Texture[] textures, int approxSize, GUIStyle style,
+            GUIContent errorMessage)
         {
             GUILayout.BeginVertical("box", GUILayout.MinHeight(approxSize));
             var newSelected = 0;
@@ -53,11 +64,15 @@ namespace Digger
 
                 var texturesPreview = new Texture[textures.Length];
                 for (var i = 0; i < textures.Length; ++i) {
-                    texturesPreview[i] = textures[i] ? (AssetPreview.GetAssetPreview(textures[i]) ?? textures[i]) : EditorGUIUtility.whiteTexture;
+                    texturesPreview[i] = textures[i]
+                        ? (AssetPreview.GetAssetPreview(textures[i]) ?? textures[i])
+                        : EditorGUIUtility.whiteTexture;
                 }
 
-                newSelected = GUI.SelectionGrid(r, Math.Min(selected, texturesPreview.Length - 1), texturesPreview, columns, style);
-            } else {
+                newSelected = GUI.SelectionGrid(r, Math.Min(selected, texturesPreview.Length - 1), texturesPreview,
+                    columns, style);
+            }
+            else {
                 GUILayout.Label(errorMessage);
             }
 

@@ -20,25 +20,31 @@ namespace Digger
             switch (state) {
                 case PlayModeStateChange.EnteredEditMode:
                 {
-                    //Debug.Log("LogPlayModeState: EnteredEditMode");
-                    if (SceneManager.GetActiveScene().IsValid()) {
-                        DiggerMasterEditor.LoadAllChunks(SceneManager.GetActiveScene());
+                    for (var i = 0; i < SceneManager.sceneCount; ++i) {
+                        var scene = SceneManager.GetSceneAt(i);
+                        if (scene.IsValid() && scene.isLoaded) {
+                            DiggerMasterEditor.LoadAllChunks(scene);
+                        }
                     }
 
                     break;
                 }
                 case PlayModeStateChange.ExitingEditMode:
                 {
-                    //Debug.Log("LogPlayModeState: ExitingEditMode");
+                    NativeCollectionsPool.Instance.Dispose();
+                    
                     for (var i = 0; i < SceneManager.sceneCount; ++i) {
                         var scene = SceneManager.GetSceneAt(i);
-                        if (scene.IsValid()) {
+                        if (scene.IsValid() && scene.isLoaded) {
                             DiggerMasterEditor.OnEnterPlayMode(scene);
                         }
                     }
 
                     break;
                 }
+                case PlayModeStateChange.ExitingPlayMode:
+                    NativeCollectionsPool.Instance.Dispose();
+                    break;
             }
         }
 

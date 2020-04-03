@@ -14,7 +14,7 @@ namespace Digger
         {
             public NativeArray<Vector3> outVertices;
             public NativeArray<Vector3> outNormals;
-            public NativeArray<int> outInfos;
+            public NativeArray<uint> outInfos;
             public NativeArray<int> outTriangles;
             public NativeArray<Vector2> outUV1s;
             public NativeArray<Color> outColors;
@@ -35,22 +35,29 @@ namespace Digger
                 outUV4s.Dispose();
             }
 
-            public static Out New(bool fullOutput)
+            public static Out New()
             {
-                var o = new Out
+                return new Out
                 {
-                    outVertices = new NativeArray<Vector3>(65532, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outNormals = new NativeArray<Vector3>(65532, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outTriangles = new NativeArray<int>(65532, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outInfos = new NativeArray<int>(fullOutput ? 65532 : 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outUV1s = new NativeArray<Vector2>(fullOutput ? 65532 : 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outColors = new NativeArray<Color>(fullOutput ? 65532 : 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outUV2s = new NativeArray<Vector4>(fullOutput ? 65532 : 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outUV3s = new NativeArray<Vector4>(fullOutput ? 65532 : 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory),
-                    outUV4s = new NativeArray<Vector4>(fullOutput ? 65532 : 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory)
+                    outVertices = new NativeArray<Vector3>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outNormals = new NativeArray<Vector3>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outTriangles = new NativeArray<int>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outInfos = new NativeArray<uint>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outUV1s = new NativeArray<Vector2>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outColors = new NativeArray<Color>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outUV2s = new NativeArray<Vector4>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outUV3s = new NativeArray<Vector4>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory),
+                    outUV4s = new NativeArray<Vector4>(65532, Allocator.Persistent,
+                        NativeArrayOptions.UninitializedMemory)
                 };
-
-                return o;
             }
         }
 
@@ -101,16 +108,16 @@ namespace Digger
             public Vector3 this[int i] {
                 get {
                     switch (i) {
-                        case 0:  return V0;
-                        case 1:  return V1;
-                        case 2:  return V2;
-                        case 3:  return V3;
-                        case 4:  return V4;
-                        case 5:  return V5;
-                        case 6:  return V6;
-                        case 7:  return V7;
-                        case 8:  return V8;
-                        case 9:  return V9;
+                        case 0: return V0;
+                        case 1: return V1;
+                        case 2: return V2;
+                        case 3: return V3;
+                        case 4: return V4;
+                        case 5: return V5;
+                        case 6: return V6;
+                        case 7: return V7;
+                        case 8: return V8;
+                        case 9: return V9;
                         case 10: return V10;
                         case 11: return V11;
                     }
@@ -138,16 +145,16 @@ namespace Digger
             public int this[int i] {
                 get {
                     switch (i) {
-                        case 0:  return Vi0;
-                        case 1:  return Vi1;
-                        case 2:  return Vi2;
-                        case 3:  return Vi3;
-                        case 4:  return Vi4;
-                        case 5:  return Vi5;
-                        case 6:  return Vi6;
-                        case 7:  return Vi7;
-                        case 8:  return Vi8;
-                        case 9:  return Vi9;
+                        case 0: return Vi0;
+                        case 1: return Vi1;
+                        case 2: return Vi2;
+                        case 3: return Vi3;
+                        case 4: return Vi4;
+                        case 5: return Vi5;
+                        case 6: return Vi6;
+                        case 7: return Vi7;
+                        case 8: return Vi8;
+                        case 9: return Vi9;
                         case 10: return Vi10;
                         case 11: return Vi11;
                     }
@@ -191,7 +198,7 @@ namespace Digger
         private NativeArray<int> outTriangles;
 
         [WriteOnly] [NativeDisableParallelForRestriction]
-        private NativeArray<int> outInfos;
+        private NativeArray<uint> outInfos;
 
         [WriteOnly] [NativeDisableParallelForRestriction]
         private NativeArray<Vector2> outUV1s;
@@ -214,6 +221,7 @@ namespace Digger
         private Vector2 uvScale;
         private int2 alphamapOrigin;
         private int lod;
+        private TerrainMaterialType materialType;
 
         public float Isovalue;
         public byte AlteredOnly;
@@ -221,20 +229,21 @@ namespace Digger
 
 
         public MarchingCubesJob(NativeArray<int> edgeTable,
-                                NativeArray<int> triTable,
-                                NativeArray<Vector3> corners,
-                                NativeCollections.NativeCounter.Concurrent vertexCounter,
-                                NativeCollections.NativeCounter.Concurrent triangleCounter,
-                                NativeArray<Voxel> voxels,
-                                NativeArray<float> alphamaps,
-                                Out o,
-                                Vector3 scale,
-                                Vector2 uvScale,
-                                Vector3 chunkWorldPosition,
-                                int lod,
-                                int2 alphamapOrigin,
-                                int2 alphamapsSize,
-                                int3 localAlphamapsSize)
+            NativeArray<int> triTable,
+            NativeArray<Vector3> corners,
+            NativeCollections.NativeCounter.Concurrent vertexCounter,
+            NativeCollections.NativeCounter.Concurrent triangleCounter,
+            NativeArray<Voxel> voxels,
+            NativeArray<float> alphamaps,
+            Out o,
+            Vector3 scale,
+            Vector2 uvScale,
+            Vector3 chunkWorldPosition,
+            int lod,
+            int2 alphamapOrigin,
+            int2 alphamapsSize,
+            int3 localAlphamapsSize,
+            TerrainMaterialType materialType)
         {
             this.edgeTable = edgeTable;
             this.triTable = triTable;
@@ -266,16 +275,22 @@ namespace Digger
             this.uvScale = uvScale;
             this.alphamapOrigin = alphamapOrigin;
             this.chunkWorldPosition = chunkWorldPosition;
+            this.materialType = materialType;
         }
 
-        private int VertexInfo(Voxel vA, Voxel vB)
+        private static Voxel VertexInfo(Voxel vA, Voxel vB)
         {
             // Use 'Altered' value of the most altered voxel to avoid artifacts (ie. prefer voxel which has been actually altered by VoxelModificationJob over a "virgin" voxel)
-            if (Math.Abs(vA.Altered) > Math.Abs(vB.Altered)) {
-                return Convert.ToInt32(vA.Altered);
-            }
+            if (vA.Alteration > vB.Alteration)
+                return vA;
 
-            return Convert.ToInt32(vB.Altered);
+            if (vA.Alteration < vB.Alteration)
+                return vB;
+
+            if (math.abs(vA.Value) < math.abs(vB.Value))
+                return vA;
+
+            return vB;
         }
 
         private Vector3 VertexInterp(Vector3 p1, Vector3 p2, Voxel vA, Voxel vB)
@@ -298,35 +313,96 @@ namespace Digger
         private Vector3 ComputeNormalAt(int xi, int yi, int zi)
         {
             return Utils.Normalize(new Vector3(
-                                       voxels[(xi + 1) * SizeVox2 + yi * SizeVox + zi].Value - voxels[(xi - 1) * SizeVox2 + yi * SizeVox + zi].Value,
-                                       voxels[xi * SizeVox2 + (yi + 1) * SizeVox + zi].Value - voxels[xi * SizeVox2 + (yi - 1) * SizeVox + zi].Value,
-                                       voxels[xi * SizeVox2 + yi * SizeVox + (zi + 1)].Value - voxels[xi * SizeVox2 + yi * SizeVox + (zi - 1)].Value
-                                   ));
+                voxels[(xi + 1) * SizeVox2 + yi * SizeVox + zi].Value -
+                voxels[(xi - 1) * SizeVox2 + yi * SizeVox + zi].Value,
+                voxels[xi * SizeVox2 + (yi + 1) * SizeVox + zi].Value -
+                voxels[xi * SizeVox2 + (yi - 1) * SizeVox + zi].Value,
+                voxels[xi * SizeVox2 + yi * SizeVox + (zi + 1)].Value -
+                voxels[xi * SizeVox2 + yi * SizeVox + (zi - 1)].Value
+            ));
         }
 
 
-        private void ComputeUVsAndColor(int vertIndex, Vector3 vertex, int texInfo)
+        private void ComputeUVsAndColor(int vertIndex, Vector3 vertex, Voxel voxel)
         {
-            var uv = new Vector2((chunkWorldPosition.x + vertex.x) * uvScale.x, (chunkWorldPosition.z + vertex.z) * uvScale.y);
+            if (materialType == TerrainMaterialType.MicroSplat) {
+                ComputeUVsAndColorForMicroSplat(vertIndex, vertex, voxel);
+                return;
+            }
+
+            var uv = new Vector2((chunkWorldPosition.x + vertex.x) * uvScale.x,
+                (chunkWorldPosition.z + vertex.z) * uvScale.y);
             outUV1s[vertIndex] = uv;
 
-            if (texInfo == 0 || texInfo == 1 || texInfo == -1) {
+            if (voxel.Alteration == Voxel.Unaltered || voxel.Alteration == Voxel.OnSurface) {
                 // near the terrain surface -> set same texture
                 outColors[vertIndex] = GetControlAt(uv, 0);
                 outUV2s[vertIndex] = GetControlAt(uv, 1);
                 outUV3s[vertIndex] = GetControlAt(uv, 2);
                 outUV4s[vertIndex] = GetControlAt(uv, 3);
-            } else {
-                var textureIndex = Voxel.GetTextureIndex(texInfo);
-                if (textureIndex < 0) {
-                    //error: Debug.LogError($"Texture index is negative: {textureIndex}, {texInfo}");
-                    return;
-                }
+            }
+            else {
+                var firstTextureIndex = voxel.FirstTextureIndex;
+                var secondTextureIndex = voxel.SecondTextureIndex;
+                var lerp = voxel.NormalizedTextureLerp;
+                outColors[vertIndex] = GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 0);
+                outUV2s[vertIndex] = GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 1);
+                outUV3s[vertIndex] = GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 2);
+                outUV4s[vertIndex] = GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 3);
+            }
+        }
 
-                outColors[vertIndex] = GetControlFor(textureIndex, 0);
-                outUV2s[vertIndex] = GetControlFor(textureIndex, 1);
-                outUV3s[vertIndex] = GetControlFor(textureIndex, 2);
-                outUV4s[vertIndex] = GetControlFor(textureIndex, 3);
+        private void ComputeUVsAndColorForMicroSplat(int vertIndex, Vector3 vertex, Voxel voxel)
+        {
+            var uv = new Vector2((chunkWorldPosition.x + vertex.x) * uvScale.x,
+                (chunkWorldPosition.z + vertex.z) * uvScale.y);
+            outUV1s[vertIndex] = uv;
+
+            if (voxel.Alteration == Voxel.Unaltered || voxel.Alteration == Voxel.OnSurface) {
+                // near the terrain surface -> set same texture
+                outColors[vertIndex] = new Color(
+                    EncodeToFloat(GetControlAt(uv, 0)),
+                    EncodeToFloat(GetControlAt(uv, 1)),
+                    EncodeToFloat(GetControlAt(uv, 2)),
+                    EncodeToFloat(GetControlAt(uv, 3))
+                );
+                outUV2s[vertIndex] = new Vector4(
+                    0,
+                    0,
+                    EncodeToFloat(GetControlAt(uv, 4)),
+                    EncodeToFloat(GetControlAt(uv, 5))
+                );
+                outUV3s[vertIndex] = new Vector4(
+                    0,
+                    0,
+                    EncodeToFloat(GetControlAt(uv, 6)),
+                    EncodeToFloat(GetControlAt(uv, 7))
+                );
+            }
+            else {
+                var firstTextureIndex = voxel.FirstTextureIndex;
+                var secondTextureIndex = voxel.SecondTextureIndex;
+                var lerp = voxel.NormalizedTextureLerp;
+
+                outColors[vertIndex] = new Color(
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 0)),
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 1)),
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 2)),
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 3))
+                );
+                outUV2s[vertIndex] = new Vector4(
+                    0,
+                    0,
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 4)),
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 5))
+                );
+                outUV3s[vertIndex] = new Vector4(
+                    0,
+                    0,
+                    EncodeToFloat(GetControlFor(firstTextureIndex, secondTextureIndex, lerp, 6)),
+                    EncodeToFloat(new Vector4(voxel.NormalizedWetnessWeight, voxel.NormalizedPuddlesWeight,
+                        voxel.NormalizedStreamsWeight, voxel.NormalizedLavaWeight))
+                );
             }
         }
 
@@ -335,11 +411,11 @@ namespace Digger
             // adjust splatUVs so the edges of the terrain tile lie on pixel centers
             var splatUV = new Vector2(uv.x * (alphamapsSize.x - 1), uv.y * (alphamapsSize.y - 1));
 
-            var wx = Math.Min(Math.Max(Convert.ToInt32(Math.Floor(splatUV.x)), 0), alphamapsSize.x - 2);
-            var wz = Math.Min(Math.Max(Convert.ToInt32(Math.Floor(splatUV.y)), 0), alphamapsSize.y - 2);
+            var wx = math.clamp(Convert.ToInt32(math.floor(splatUV.x)), 0, alphamapsSize.x - 2);
+            var wz = math.clamp(Convert.ToInt32(math.floor(splatUV.y)), 0, alphamapsSize.y - 2);
             var relPos = splatUV - new Vector2(wx, wz);
-            var x = Math.Min(Math.Max(wx - alphamapOrigin.x, 0), localAlphamapsSize.x - 2);
-            var z = Math.Min(Math.Max(wz - alphamapOrigin.y, 0), localAlphamapsSize.y - 2);
+            var x = math.clamp(wx - alphamapOrigin.x, 0, localAlphamapsSize.x - 2);
+            var z = math.clamp(wz - alphamapOrigin.y, 0, localAlphamapsSize.y - 2);
 
             index *= 4;
 
@@ -358,18 +434,40 @@ namespace Digger
             return ctrl;
         }
 
-        private static Vector4 GetControlFor(int textureIndex, int index)
+        private static Vector4 GetControlFor(uint firstTextureIndex, uint secondTextureIndex, float lerp, int index)
         {
             var ctrl = Vector4.zero;
-            if (index * 4 == textureIndex)
-                ctrl.x = 1f;
-            else if (index * 4 + 1 == textureIndex)
-                ctrl.y = 1f;
-            else if (index * 4 + 2 == textureIndex)
-                ctrl.z = 1f;
-            else if (index * 4 + 3 == textureIndex)
-                ctrl.w = 1f;
+            if (index * 4 == firstTextureIndex)
+                ctrl.x = 1f - lerp;
+            else if (index * 4 == secondTextureIndex)
+                ctrl.x = lerp;
+
+            if (index * 4 + 1 == firstTextureIndex)
+                ctrl.y = 1f - lerp;
+            else if (index * 4 + 1 == secondTextureIndex)
+                ctrl.y = lerp;
+
+            if (index * 4 + 2 == firstTextureIndex)
+                ctrl.z = 1f - lerp;
+            else if (index * 4 + 2 == secondTextureIndex)
+                ctrl.z = lerp;
+
+            if (index * 4 + 3 == firstTextureIndex)
+                ctrl.w = 1f - lerp;
+            else if (index * 4 + 3 == secondTextureIndex)
+                ctrl.w = lerp;
+
             return ctrl;
+        }
+
+        private static float EncodeToFloat(Vector4 enc)
+        {
+            var ex = (uint) (enc.x * 255);
+            var ey = (uint) (enc.y * 255);
+            var ez = (uint) (enc.z * 255);
+            var ew = (uint) (enc.w * 255);
+            var v = (ex << 24) + (ey << 16) + (ez << 8) + ew;
+            return v / (256.0f * 256.0f * 256.0f * 256.0f);
         }
 
 
@@ -379,7 +477,8 @@ namespace Digger
             var yi = (index - xi * SizeVox2) / SizeVox;
             var zi = index - xi * SizeVox2 - yi * SizeVox;
 
-            if (xi == 0 || xi >= SizeVox - lod - 1 || yi == 0 || yi >= SizeVox - lod - 1 || zi == 0 || zi >= SizeVox - lod - 1
+            if (xi == 0 || xi >= SizeVox - lod - 1 || yi == 0 || yi >= SizeVox - lod - 1 || zi == 0 ||
+                zi >= SizeVox - lod - 1
                 || (xi - 1) % lod != 0 || (yi - 1) % lod != 0 || (zi - 1) % lod != 0)
                 return;
 
@@ -393,14 +492,14 @@ namespace Digger
             var v7 = voxels[xi * SizeVox * SizeVox + (yi + lod) * SizeVox + (zi + lod)];
 
             if (AlteredOnly == 1 &&
-                v0.Altered == 0 &&
-                v1.Altered == 0 &&
-                v2.Altered == 0 &&
-                v3.Altered == 0 &&
-                v4.Altered == 0 &&
-                v5.Altered == 0 &&
-                v6.Altered == 0 &&
-                v7.Altered == 0)
+                v0.Alteration == 0 &&
+                v1.Alteration == 0 &&
+                v2.Alteration == 0 &&
+                v3.Alteration == 0 &&
+                v4.Alteration == 0 &&
+                v5.Alteration == 0 &&
+                v6.Alteration == 0 &&
+                v7.Alteration == 0)
                 return;
 
             var cubeindex = 0;
@@ -448,9 +547,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi0 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v0, v1);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V0, texInfo);
+                    var vox = VertexInfo(v0, v1);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V0, vox);
                 }
             }
 
@@ -462,9 +561,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi1 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v1, v2);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V1, texInfo);
+                    var vox = VertexInfo(v1, v2);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V1, vox);
                 }
             }
 
@@ -476,9 +575,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi2 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v2, v3);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V2, texInfo);
+                    var vox = VertexInfo(v2, v3);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V2, vox);
                 }
             }
 
@@ -490,9 +589,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi3 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v3, v0);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V3, texInfo);
+                    var vox = VertexInfo(v3, v0);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V3, vox);
                 }
             }
 
@@ -504,9 +603,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi4 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v4, v5);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V4, texInfo);
+                    var vox = VertexInfo(v4, v5);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V4, vox);
                 }
             }
 
@@ -518,9 +617,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi5 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v5, v6);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V5, texInfo);
+                    var vox = VertexInfo(v5, v6);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V5, vox);
                 }
             }
 
@@ -532,9 +631,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi6 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v6, v7);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V6, texInfo);
+                    var vox = VertexInfo(v6, v7);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V6, vox);
                 }
             }
 
@@ -546,9 +645,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi7 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v7, v4);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V7, texInfo);
+                    var vox = VertexInfo(v7, v4);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V7, vox);
                 }
             }
 
@@ -560,9 +659,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi8 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v0, v4);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V8, texInfo);
+                    var vox = VertexInfo(v0, v4);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V8, vox);
                 }
             }
 
@@ -574,9 +673,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi9 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v1, v5);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V9, texInfo);
+                    var vox = VertexInfo(v1, v5);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V9, vox);
                 }
             }
 
@@ -588,9 +687,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi10 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v2, v6);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V10, texInfo);
+                    var vox = VertexInfo(v2, v6);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V10, vox);
                 }
             }
 
@@ -602,9 +701,9 @@ namespace Digger
                 outNormals[vertIndex] = Utils.Normalize(norm);
                 wVertIndices.Vi11 = vertIndex;
                 if (FullOutput == 1) {
-                    var texInfo = VertexInfo(v3, v7);
-                    outInfos[vertIndex] = texInfo;
-                    ComputeUVsAndColor(vertIndex, wVert.V11, texInfo);
+                    var vox = VertexInfo(v3, v7);
+                    outInfos[vertIndex] = vox.Alteration;
+                    ComputeUVsAndColor(vertIndex, wVert.V11, vox);
                 }
             }
 

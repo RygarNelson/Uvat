@@ -7,7 +7,7 @@ namespace Digger.TerrainCutters
         public static TerrainCutter Create(Terrain terrain, DiggerSystem digger)
         {
 #if UNITY_2019_3_OR_NEWER
-            return TerrainCutter20193.CreateInstance(terrain, digger);
+            return TerrainCutter20193.CreateInstance(digger);
 #else
             return TerrainCutterLegacy.CreateInstance(terrain, digger);
 #endif
@@ -45,8 +45,6 @@ namespace Digger.TerrainCutters
         }
 
         public abstract void Refresh();
-        public abstract void Cut(CutEntry cutEntry, bool cutDetails);
-        public abstract void UnCut(int x, int z);
         protected abstract void ApplyInternal(bool persist);
         public abstract void LoadFrom(string path);
         public abstract void SaveTo(string path);

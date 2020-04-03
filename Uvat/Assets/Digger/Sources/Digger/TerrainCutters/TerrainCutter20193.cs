@@ -1,5 +1,7 @@
-﻿using System.IO;
+﻿using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using Unity.Collections;
 using UnityEngine;
 
 namespace Digger.TerrainCutters
@@ -7,11 +9,18 @@ namespace Digger.TerrainCutters
 #if UNITY_2019_3_OR_NEWER
     public class TerrainCutter20193 : TerrainCutter
     {
+        private const int LargeFileBufferSize = 32768;
+
         [SerializeField] private DiggerSystem digger;
 
+        private TerrainData terrainData;
         private bool needsSync;
-        private bool[,] holes;
         private int holesResolution;
+        private int sizeOfMesh;
+        private int voxResolution;
+        private int sizeOfMeshHoles;
+        
+        private Dictionary<Vector2i, bool[,]> holesPerChunk;
 
         public override void OnEnterPlayMode()
         {
@@ -25,7 +34,7 @@ namespace Digger.TerrainCutters
             LoadFrom(transparencyMapPath);
         }
 
-        public static TerrainCutter20193 CreateInstance(Terrain terrain, DiggerSystem digger)
+        public static TerrainCutter20193 CreateInstance(DiggerSystem digger)
         {
             var cutter = digger.gameObject.AddComponent<TerrainCutter20193>();
             cutter.digger = digger;
@@ -35,26 +44,75 @@ namespace Digger.TerrainCutters
 
         public override void Refresh()
         {
+            terrainData = digger.Terrain.terrainData;
+            holesResolution = terrainData.holesResolution;
+            sizeOfMesh = digger.SizeOfMesh;
+            voxResolution = digger.ResolutionMult;
+            sizeOfMeshHoles = sizeOfMesh / voxResolution;
+            var chunkRes = holesResolution / sizeOfMesh;
+            holesPerChunk = new Dictionary<Vector2i, bool[,]>(chunkRes * chunkRes, new Vector2iComparer());
             // force initialisation of holes texture
-            var tData = digger.Terrain.terrainData;
-            holesResolution = tData.holesResolution;
-            tData.SetHoles(0, 0, tData.GetHoles(0, 0, 1, 1));
-            holes = tData.GetHoles(0, 0, holesResolution, holesResolution);
+            terrainData.SetHoles(0, 0, terrainData.GetHoles(0, 0, 1, 1));
         }
 
-        public override void Cut(CutEntry cutEntry, bool cutDetails)
+        private bool[,] GetCreateHoles(Vector2i chunkPosition, Vector3i voxelPosition)
         {
-            if (cutEntry.Z < 0 || cutEntry.Z > holesResolution - 1 || cutEntry.X < 0 || cutEntry.X > holesResolution - 1) {
-                return;
+            if (holesPerChunk.TryGetValue(chunkPosition, out var holes)) {
+                return holes;
             }
-            holes[cutEntry.Z, cutEntry.X] = false;
-            needsSync = true;
-        }
 
-        public override void UnCut(int x, int z)
+            holes = terrainData.GetHoles(voxelPosition.x / voxResolution, voxelPosition.z / voxResolution, sizeOfMeshHoles, sizeOfMeshHoles);
+            holesPerChunk.Add(chunkPosition, holes);
+            return holes;
+        }
+        
+        public void Cut(NativeArray<int> chunkHoles, Vector3i voxelPosition, Vector3i chunkPosition)
         {
-            holes[z, x] = true;
+            var holes = GetCreateHoles(new Vector2i(chunkPosition.x, chunkPosition.z), voxelPosition);
+            if (voxResolution == 1) { // this is just a quick-win
+                for (var x = 0; x < sizeOfMeshHoles; ++x) {
+                    for (var z = 0; z < sizeOfMeshHoles; ++z) {
+                        holes[x, z] = holes[x, z] &&
+                                      chunkHoles[(x*voxResolution) * sizeOfMesh + (z*voxResolution)] == 0;
+                    }
+                }
+            } else {
+                for (var x = 0; x < sizeOfMeshHoles; ++x) {
+                    for (var z = 0; z < sizeOfMeshHoles; ++z) {
+                        for (var rx = 0; rx < voxResolution; ++rx) {
+                            for (var rz = 0; rz < voxResolution; ++rz) {
+                                holes[x, z] = holes[x, z] &&
+                                              chunkHoles[(x*voxResolution + rx) * sizeOfMesh + (z*voxResolution + rz)] == 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Utils.Profiler.BeginSample("[Dig] Cutter20193.Cut");
+            terrainData.SetHolesDelayLOD(voxelPosition.x / voxResolution, voxelPosition.z / voxResolution, holes);
             needsSync = true;
+            Utils.Profiler.EndSample();
+        }
+        
+        public void UnCut(NativeArray<int> chunkHoles, Vector3i voxelPosition, Vector3i chunkPosition)
+        {
+            var holes = GetCreateHoles(new Vector2i(chunkPosition.x, chunkPosition.z), voxelPosition);
+            for (var x = 0; x < sizeOfMeshHoles; ++x) {
+                for (var z = 0; z < sizeOfMeshHoles; ++z) {
+                    for (var rx = 0; rx < voxResolution; ++rx) {
+                        for (var rz = 0; rz < voxResolution; ++rz) {
+                            holes[x, z] = holes[x, z] || 
+                                          chunkHoles[(x*voxResolution + rx) * sizeOfMesh + (z*voxResolution + rz)] != 0;
+                        }
+                    }
+                }
+            }
+
+            Utils.Profiler.BeginSample("[Dig] Cutter20193.UnCut");
+            terrainData.SetHolesDelayLOD(voxelPosition.x / voxResolution, voxelPosition.z / voxResolution, holes);
+            needsSync = true;
+            Utils.Profiler.EndSample();
         }
 
         protected override void ApplyInternal(bool persist)
@@ -62,7 +120,7 @@ namespace Digger.TerrainCutters
             Utils.Profiler.BeginSample("[Dig] Cutter20193.Apply");
             if (needsSync) {
                 needsSync = false;
-                digger.Terrain.terrainData.SetHoles(0, 0, holes);
+                terrainData.SyncTexture(TerrainData.HolesTextureName);
             }
 
             Utils.Profiler.EndSample();
@@ -75,7 +133,8 @@ namespace Digger.TerrainCutters
 
             Refresh();
             var resolution = digger.Terrain.terrainData.holesResolution;
-            using (Stream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+            var holes = new bool[resolution,resolution];
+            using (Stream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, LargeFileBufferSize)) {
                 using (var reader = new BinaryReader(stream, Encoding.Default)) {
                     for (var x = 0; x < resolution; ++x) {
                         for (var z = 0; z < resolution; ++z) {
@@ -90,14 +149,15 @@ namespace Digger.TerrainCutters
 
         public override void SaveTo(string path)
         {
+            var resolution = digger.Terrain.terrainData.holesResolution;
+            var holes = digger.Terrain.terrainData.GetHoles(0, 0, resolution, resolution);
             if (holes == null)
                 return;
 
             if (File.Exists(path))
                 File.Delete(path);
 
-            var resolution = digger.Terrain.terrainData.holesResolution;
-            using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Write)) {
+            using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, LargeFileBufferSize)) {
                 using (var writer = new BinaryWriter(stream, Encoding.Default)) {
                     for (var x = 0; x < resolution; ++x) {
                         for (var z = 0; z < resolution; ++z) {
@@ -112,7 +172,9 @@ namespace Digger.TerrainCutters
         {
 #if UNITY_EDITOR
             Utils.Profiler.BeginSample("[Dig] Cutter.Clear");
+            Refresh();
             var resolution = digger.Terrain.terrainData.holesResolution;
+            var holes = digger.Terrain.terrainData.GetHoles(0, 0, resolution, resolution);
             for (var x = 0; x < resolution; ++x) {
                 for (var z = 0; z < resolution; ++z) {
                     holes[z, x] = true;

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Digger.TerrainCutters;
 using Digger.Unsafe;
@@ -7,10 +8,6 @@ using Unity.Collections;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
-
-#if UNITY_EDITOR
-
-#endif
 
 namespace Digger
 {
@@ -36,8 +33,13 @@ namespace Digger
 
         public ChunkTriggerBounds TriggerBounds => bounds;
 
+        public bool IsLoaded => voxelArray != null && voxelArray.Length > 0;
+
+        public Vector3i ChunkPosition => chunkPosition;
+
         internal static VoxelChunk Create(DiggerSystem digger, Chunk chunk)
         {
+            Utils.Profiler.BeginSample("VoxelChunk.Create");
             var go = new GameObject("VoxelChunk")
             {
                 hideFlags = HideFlags.DontSaveInBuild
@@ -55,12 +57,14 @@ namespace Digger
             voxelChunk.worldPosition = chunk.WorldPosition;
             voxelChunk.Load();
 
+            Utils.Profiler.EndSample();
             return voxelChunk;
         }
 
         private static void FeedHeights(DiggerSystem digger, Vector3i chunkVoxelPosition, ref float[] heightArray,
             ref float[] verticalNormalArray)
         {
+            Utils.Profiler.BeginSample("VoxelChunk.FeedHeights");
             var sizeVox = digger.SizeVox;
             if (heightArray == null)
                 heightArray = new float[sizeVox * sizeVox];
@@ -68,16 +72,17 @@ namespace Digger
             if (verticalNormalArray == null)
                 verticalNormalArray = new float[sizeVox * sizeVox];
 
+            Utils.Profiler.BeginSample("VoxelChunk.FeedHeights>Loop");
             var heightFeeder = digger.HeightFeeder;
             for (var xi = 0; xi < sizeVox; ++xi) {
                 for (var zi = 0; zi < sizeVox; ++zi) {
-                    heightArray[xi * sizeVox + zi] = heightFeeder.GetHeight(chunkVoxelPosition.x + (xi - 1),
-                        chunkVoxelPosition.z + (zi - 1));
-                    verticalNormalArray[xi * sizeVox + zi] =
-                        heightFeeder.GetVerticalNormal(chunkVoxelPosition.x + (xi - 1),
-                            chunkVoxelPosition.z + (zi - 1));
+                    heightArray[xi * sizeVox + zi] = heightFeeder.GetHeight(chunkVoxelPosition.x + (xi - 1), chunkVoxelPosition.z + (zi - 1));
+                    verticalNormalArray[xi * sizeVox + zi] = heightFeeder.GetVerticalNormal(chunkVoxelPosition.x + (xi - 1), chunkVoxelPosition.z + (zi - 1));
                 }
             }
+            
+            Utils.Profiler.EndSample();
+            Utils.Profiler.EndSample();
         }
 
         private static void GenerateVoxels(DiggerSystem digger, float[] heightArray, int chunkAltitude,
@@ -115,8 +120,40 @@ namespace Digger
             Utils.Profiler.EndSample();
         }
 
+        public void RefreshVoxels()
+        {
+            Utils.Profiler.BeginSample("VoxelChunk.RefreshVoxels");
+            if (voxelArray == null)
+                return;
+
+            var heights = new NativeArray<float>(heightArray, Allocator.TempJob);
+            var voxels = new NativeArray<Voxel>(voxelArray, Allocator.TempJob);
+
+            // Set up the job data
+            var jobData = new VoxelRefreshJob()
+            {
+                ChunkAltitude = voxelPosition.y,
+                Heights = heights,
+                Voxels = voxels,
+                SizeVox = sizeVox,
+                SizeVox2 = sizeVox * sizeVox
+            };
+
+            // Schedule the job
+            var handle = jobData.Schedule(voxels.Length, 64);
+
+            // Wait for the job to complete
+            handle.Complete();
+
+            voxels.CopyTo(voxelArray);
+            heights.Dispose();
+            voxels.Dispose();
+
+            Utils.Profiler.EndSample();
+        }
+
         public void DoOperation(BrushType brush, ActionType action, float intensity, Vector3 position,
-            float radius, float coneHeight, bool upsideDown, int textureIndex, bool cutDetails)
+            float radius, float coneHeight, bool upsideDown, int textureIndex, bool cutDetails, bool isTargetIntensity)
         {
             if (action == ActionType.Smooth || action == ActionType.BETA_Sharpen) {
                 DoKernelOperation(action, intensity, position, radius, cutDetails, textureIndex);
@@ -127,8 +164,10 @@ namespace Digger
             var heights = new NativeArray<float>(heightArray, Allocator.TempJob);
             var normals = new NativeArray<float>(verticalNormalArray, Allocator.TempJob);
             var voxels = new NativeArray<Voxel>(voxelArray, Allocator.TempJob);
+#if UNITY_2019_3_OR_NEWER
+            var chunkHoles = new NativeArray<int>(sizeOfMesh * sizeOfMesh, Allocator.TempJob);
+#else
             var toCut = new NativeCollections.NativeQueue<CutEntry>(Allocator.TempJob);
-#if !UNITY_2019_3_OR_NEWER
             var toTriggerBounds = new NativeCollections.NativeQueue<float3>(Allocator.TempJob);
 #endif
 
@@ -142,6 +181,7 @@ namespace Digger
             {
                 SizeVox = sizeVox,
                 SizeVox2 = sizeVox * sizeVox,
+                SizeOfMesh = sizeOfMesh,
                 Brush = brush,
                 Action = action,
                 HeightmapScale = digger.HeightmapScale,
@@ -150,24 +190,23 @@ namespace Digger
                 Heights = heights,
                 VerticalNormals = normals,
                 Intensity = intensity,
+                IsTargetIntensity = isTargetIntensity,
                 Center = position,
                 Radius = radius,
                 ConeHeight = coneHeight,
                 UpsideDown = upsideDown,
                 RadiusWithMargin =
                     radius + Math.Max(Math.Max(digger.CutMargin.x, digger.CutMargin.y), digger.CutMargin.z),
-                TextureIndex = (sbyte) textureIndex,
+                TextureIndex = (uint) textureIndex,
                 CutSize = new int2(cutSizeX, cutSizeZ),
-                WorldPosition = worldPosition,
 #if UNITY_2019_3_OR_NEWER
-                TerrainRelativePositionToHolePosition =
- new float2(1f / tData.size.x * tData.holesResolution, 1f / tData.size.z * tData.holesResolution),
-                ToCut = toCut.ToConcurrent()
+                Holes = chunkHoles
 #else
+                ToCut = toCut.ToConcurrent(),
+                WorldPosition = worldPosition,
                 TerrainRelativePositionToHolePosition = new float2(1f / tData.size.x * tData.alphamapWidth,
                     1f / tData.size.z * tData.alphamapHeight),
                 ToTriggerBounds = toTriggerBounds.ToConcurrent(),
-                ToCut = toCut.ToConcurrent()
 #endif
             };
             jobData.PostConstruct();
@@ -183,9 +222,18 @@ namespace Digger
             normals.Dispose();
             heights.Dispose();
 
-            UpdateCut(cutDetails, toCut);
+#if UNITY_2019_3_OR_NEWER
+            var cutter = (TerrainCutter20193) digger.Cutter;
+            if (action != ActionType.Reset) {
+                cutter.Cut(chunkHoles, voxelPosition, chunkPosition);
+            }
+            else {
+                cutter.UnCut(chunkHoles, voxelPosition, chunkPosition);
+            }
 
-#if !UNITY_2019_3_OR_NEWER
+            chunkHoles.Dispose();
+#else
+            UpdateCut(cutDetails, toCut);
             var triggerBounds = new ChunkTriggerBounds(digger.HeightmapScale, digger.SizeOfMesh);
             while (toTriggerBounds.Count > 0) {
                 triggerBounds.ExtendIfNeeded(toTriggerBounds.Dequeue());
@@ -214,8 +262,10 @@ namespace Digger
 
             var heights = new NativeArray<float>(heightArray, Allocator.TempJob);
             var normals = new NativeArray<float>(verticalNormalArray, Allocator.TempJob);
+#if UNITY_2019_3_OR_NEWER
+            var chunkHoles = new NativeArray<int>(sizeOfMesh * sizeOfMesh, Allocator.TempJob);
+#else
             var toCut = new NativeCollections.NativeQueue<CutEntry>(Allocator.TempJob);
-#if !UNITY_2019_3_OR_NEWER
             var toTriggerBounds = new NativeCollections.NativeQueue<float3>(Allocator.TempJob);
 #endif
 
@@ -240,22 +290,18 @@ namespace Digger
                 Radius = radius,
                 RadiusWithMargin =
                     radius + Math.Max(Math.Max(digger.CutMargin.x, digger.CutMargin.y), digger.CutMargin.z),
-
-                TextureIndex = (sbyte) textureIndex,
                 ChunkAltitude = voxelPosition.y,
                 Heights = heights,
                 VerticalNormals = normals,
                 CutSize = new int2(cutSizeX, cutSizeZ),
-                WorldPosition = worldPosition,
 #if UNITY_2019_3_OR_NEWER
-                TerrainRelativePositionToHolePosition =
- new float2(1f / tData.size.x * tData.holesResolution, 1f / tData.size.z * tData.holesResolution),
-                ToCut = toCut.ToConcurrent(),
+                Holes = chunkHoles,
 #else
+                WorldPosition = worldPosition,
+                ToCut = toCut.ToConcurrent(),
                 TerrainRelativePositionToHolePosition = new float2(1f / tData.size.x * tData.alphamapWidth,
                     1f / tData.size.z * tData.alphamapHeight),
                 ToTriggerBounds = toTriggerBounds.ToConcurrent(),
-                ToCut = toCut.ToConcurrent(),
 #endif
 
                 NeighborVoxelsLBB = LoadVoxels(digger, chunkPosition + new Vector3i(-1, -1, -1)),
@@ -300,9 +346,12 @@ namespace Digger
             normals.Dispose();
             heights.Dispose();
 
+#if UNITY_2019_3_OR_NEWER
+            var cutter = (TerrainCutter20193) digger.Cutter;
+            cutter.Cut(chunkHoles, voxelPosition, chunkPosition);
+            chunkHoles.Dispose();
+#else
             UpdateCut(cutDetails, toCut);
-
-#if !UNITY_2019_3_OR_NEWER
             var triggerBounds = new ChunkTriggerBounds(digger.HeightmapScale, digger.SizeOfMesh);
             while (toTriggerBounds.Count > 0) {
                 triggerBounds.ExtendIfNeeded(toTriggerBounds.Dequeue());
@@ -320,18 +369,23 @@ namespace Digger
             Utils.Profiler.EndSample();
         }
 
+#if !UNITY_2019_3_OR_NEWER
         private void UpdateCut(bool cutDetails, NativeCollections.NativeQueue<CutEntry> toCut)
         {
+            Utils.Profiler.BeginSample("[Dig] VoxelChunk.UpdateCut");
+            var cutter = (TerrainCutterLegacy) digger.Cutter;
             while (toCut.Count > 0) {
                 var cutEntry = toCut.Dequeue();
-                digger.Cutter.Cut(cutEntry, cutDetails);
+                cutter.Cut(cutEntry, cutDetails);
             }
 
             toCut.Dispose();
+            Utils.Profiler.EndSample();
         }
 
         public void UnCutAllVertically()
         {
+            var cutter = (TerrainCutterLegacy) digger.Cutter;
             var hScale = digger.HeightmapScale;
             var tData = digger.Terrain.terrainData;
             for (var xi = 0; xi < sizeVox; ++xi) {
@@ -339,9 +393,15 @@ namespace Digger
                     var pos = new Vector3((xi - 1) * hScale.x, 0, (zi - 1) * hScale.z);
                     var wpos = pos + worldPosition;
                     var p = TerrainUtils.TerrainRelativePositionToHolePosition(tData, wpos);
-                    digger.Cutter.UnCut(p.x, p.z);
+                    cutter.UnCut(p.x, p.z);
                 }
             }
+        }
+#endif
+
+        public bool HasAlteredVoxels()
+        {
+            return voxelArray != null && voxelArray.Any(voxel => voxel.Alteration != Voxel.Unaltered);
         }
 
         public Mesh BuildVisualMesh(int lod)
@@ -361,9 +421,9 @@ namespace Digger
             Utils.Profiler.BeginSample("[Dig] VoxelChunk.BuildMesh");
             Utils.Profiler.BeginSample("[Dig] VoxelChunk.BuildMesh.AllocateNatives");
             Utils.Profiler.BeginSample("[Dig] AllocateTables");
-            var edgeTable = MarchingCubesTables.NewEdgeTable();
-            var triTable = MarchingCubesTables.NewTriTable();
-            var corners = MarchingCubesTables.NewCorners();
+            var edgeTable = NativeCollectionsPool.Instance.GetMCEdgeTable();
+            var triTable = NativeCollectionsPool.Instance.GetMCTriTable();
+            var corners = NativeCollectionsPool.Instance.GetMCCorners();
             Utils.Profiler.EndSample();
             Utils.Profiler.BeginSample("[Dig] AllocVoxels");
             var voxels = new NativeArray<Voxel>(voxelArray, Allocator.TempJob);
@@ -371,7 +431,7 @@ namespace Digger
             Utils.Profiler.BeginSample("[Dig] AllocAlphamaps");
             var alphamaps = new NativeArray<float>(alphamapArray, Allocator.TempJob);
             Utils.Profiler.EndSample();
-            var o = MarchingCubesJob.Out.New(!colliderMesh);
+            var o = NativeCollectionsPool.Instance.GetMCOut(); //MarchingCubesJob.Out.New(!colliderMesh);
             var vertexCounter = new NativeCollections.NativeCounter(Allocator.TempJob);
             var triangleCounter = new NativeCollections.NativeCounter(Allocator.TempJob, 3);
             Utils.Profiler.EndSample();
@@ -404,7 +464,8 @@ namespace Digger
                 lod,
                 alphamapArrayOrigin,
                 alphamapsSize,
-                alphamapArraySize);
+                alphamapArraySize,
+                digger.MaterialType);
 
             jobData.SizeVox = sizeVox;
             jobData.SizeVox2 = sizeVox * sizeVox;
@@ -421,9 +482,6 @@ namespace Digger
             var vertexCount = vertexCounter.Count;
             var triangleCount = triangleCounter.Count;
 
-            edgeTable.Dispose();
-            triTable.Dispose();
-            corners.Dispose();
             voxels.Dispose();
             alphamaps.Dispose();
             vertexCounter.Dispose();
@@ -436,8 +494,6 @@ namespace Digger
             else {
                 mesh = ToMesh(o, vertexCount, triangleCount);
             }
-
-            o.Dispose();
 
             Utils.Profiler.EndSample();
             return mesh;
@@ -494,7 +550,7 @@ namespace Digger
             NativeArray<Vector3>.Copy(o.outNormals, DirectMeshAccess.NormalArray, vertexCount);
             NativeArray<Color>.Copy(o.outColors, DirectMeshAccess.ColorArray, vertexCount);
             NativeArray<Vector2>.Copy(o.outUV1s, DirectMeshAccess.Uv0Array, vertexCount);
-            NativeArray<int>.Copy(o.outInfos, DirectMeshAccess.InfoArray, vertexCount);
+            NativeArray<uint>.Copy(o.outInfos, DirectMeshAccess.InfoArray, vertexCount);
 
             var uvs = DirectMeshAccess.Uv0Array;
             var normals = DirectMeshAccess.NormalArray;
@@ -502,7 +558,7 @@ namespace Digger
             var infos = DirectMeshAccess.InfoArray;
             for (var i = 0; i < vertexCount; ++i) {
                 var texInfo = infos[i];
-                if (texInfo == 0 || texInfo == 1 || texInfo == -1) {
+                if (texInfo == Voxel.Unaltered || texInfo == Voxel.OnSurface) {
                     // near the terrain surface -> set same normal
                     var uv = uvs[i];
                     normals[i] = tData.GetInterpolatedNormal(uv.x, uv.y);
@@ -510,9 +566,16 @@ namespace Digger
             }
 
             DirectMeshAccess.DirectSetTotal(mesh, vertexCount, triangleCount);
-            mesh.SetUVs(1, ListPool.ToVector4List(o.outUV2s, vertexCount));
-            mesh.SetUVs(2, ListPool.ToVector4List(o.outUV3s, vertexCount));
-            mesh.SetUVs(3, ListPool.ToVector4List(o.outUV4s, vertexCount));
+            if (digger.MaterialType == TerrainMaterialType.HDRP) {
+                ListPool.ToVector2Lists(o.outUV2s, vertexCount, out var vector2List1, out var vector2List2);
+                mesh.SetUVs(2, vector2List1);
+                mesh.SetUVs(3, vector2List2);
+            }
+            else {
+                mesh.SetUVs(1, ListPool.ToVector4List(o.outUV2s, vertexCount));
+                mesh.SetUVs(2, ListPool.ToVector4List(o.outUV3s, vertexCount));
+                mesh.SetUVs(3, ListPool.ToVector4List(o.outUV4s, vertexCount));
+            }
         }
 
         private void RecordUndoIfNeeded()
@@ -582,6 +645,7 @@ namespace Digger
 
         public void Load()
         {
+            Utils.Profiler.BeginSample("VoxelChunk.Load");
             // Feed heights again in case they have been modified
             FeedHeights(digger, voxelPosition, ref heightArray, ref verticalNormalArray);
             FeedAlphamaps();
@@ -596,6 +660,7 @@ namespace Digger
                     digger.EnsureChunkWillBePersisted(this);
                 }
 
+                Utils.Profiler.EndSample();
                 return;
             }
 
@@ -606,6 +671,7 @@ namespace Digger
             rawBytes = Utils.GetBytes(metadataPath);
             if (rawBytes == null) {
                 Debug.LogError($"Could not read metadata file of chunk {chunkPosition}");
+                Utils.Profiler.EndSample();
                 return;
             }
 
@@ -618,11 +684,14 @@ namespace Digger
                         hScale, sizeOfMesh);
                 }
             }
+            
+            Utils.Profiler.EndSample();
         }
 
 
         private void FeedAlphamaps()
         {
+            Utils.Profiler.BeginSample("VoxelChunk.FeedAlphamaps");
             var tData = digger.Terrain.terrainData;
             var alphamapsSize = new int2(tData.alphamapWidth, tData.alphamapHeight);
             var uvScale = new Vector2(1f / tData.size.x,
@@ -642,9 +711,11 @@ namespace Digger
             alphamapArraySize.xy = a11I - a00I;
             alphamapArraySize.z = alphamapCount;
             alphamapArrayOrigin = a00I;
+            
+            Utils.Profiler.EndSample();
         }
 
-        internal void ClearVoxelArrayBeforeSmooth()
+        internal void PrepareKernelOperation()
         {
             voxelArrayBeforeSmooth = null;
         }
@@ -684,6 +755,7 @@ namespace Digger
                     return new NativeArray<Voxel>(chunk.VoxelChunk.voxelArrayBeforeSmooth, Allocator.TempJob);
                 }
 
+                chunk.LazyLoad();
                 return new NativeArray<Voxel>(chunk.VoxelChunk.voxelArray, Allocator.TempJob);
             }
 

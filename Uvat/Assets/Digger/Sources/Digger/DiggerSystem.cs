@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -19,24 +18,29 @@ namespace Digger
 {
     public class DiggerSystem : MonoBehaviour
     {
-        public const int DiggerVersion = 10;
-        public const string VoxelFileExtension = "vox";
+        public const int DiggerVersion = 20;
+        public const string VoxelFileExtension = "vox2";
+        public const string VoxelFileExtensionLegacy = "vox";
         private const string VoxelMetadataFileExtension = "vom";
         private const string VersionFileExtension = "ver";
         private const int UndoStackSize = 15;
-        public const int MaxTextureCountSupported = 16;
 
         private Dictionary<Vector3i, Chunk> chunks;
         private IHeightFeeder heightFeeder;
         private HashSet<VoxelChunk> chunksToPersist;
         private Dictionary<Collider, int> colliderStates;
-        private readonly Dictionary<Vector3i, Chunk> builtChunks = new Dictionary<Vector3i, Chunk>(new Vector3iComparer());
+
+        private readonly Dictionary<Vector3i, Chunk> builtChunks =
+            new Dictionary<Vector3i, Chunk>(new Vector3iComparer());
+
         private bool disablePersistence;
         private Bounds bounds = new Bounds();
+        private bool needRecordUndo;
 
         [SerializeField] private DiggerMaster master;
         [SerializeField] private string guid;
         [SerializeField] private long version = 1;
+        [SerializeField] private string basePathData;
 
         [SerializeField] private TerrainCutter cutter;
 
@@ -56,8 +60,8 @@ namespace Digger
         public Vector3 HoleMapScale => holeMapScale;
 
         public Vector3 CutMargin => new Vector3(Math.Max(2f, 2.1f * holeMapScale.x),
-                                                Math.Max(2f, 2.1f * holeMapScale.y),
-                                                Math.Max(2f, 2.1f * holeMapScale.z));
+            Math.Max(2f, 2.1f * holeMapScale.y),
+            Math.Max(2f, 2.1f * holeMapScale.z));
 
         public TerrainCutter Cutter => cutter;
         public IHeightFeeder HeightFeeder => heightFeeder;
@@ -76,6 +80,7 @@ namespace Digger
 
         public int SizeOfMesh => master.SizeOfMesh;
         public int SizeVox => master.SizeVox;
+        public int ResolutionMult => master.ResolutionMult;
 
         public int DefaultNavMeshArea { get; set; }
 
@@ -89,7 +94,23 @@ namespace Digger
         }
 
         private string BaseFolder => $"{guid}";
-        public string BasePathData => Path.Combine(master.SceneDataPath, BaseFolder);
+
+        public string BasePathData {
+            get {
+                // Handle legacy
+                if (string.IsNullOrEmpty(basePathData)) {
+                    basePathData = ComputeBasePathData();
+                }
+                
+                return basePathData;
+            }
+        }
+        
+        private string ComputeBasePathData() {
+            if (!master) master = FindObjectOfType<DiggerMaster>();
+            return Path.Combine(master.SceneDataPath, BaseFolder);
+        }
+
         private string InternalPathData => Path.Combine(BasePathData, ".internal");
 
         private string StreamingAssetsPathData =>
@@ -114,7 +135,8 @@ namespace Digger
         private int TerrainChunkHeight =>
             Terrain.terrainData.heightmapResolution * master.ResolutionMult / SizeOfMesh - 1;
 
-        public bool IsInitialized => Terrain != null && chunks != null && cutter != null && heightFeeder != null &&
+        public bool IsInitialized => Terrain != null && master != null && chunks != null && cutter != null &&
+                                     heightFeeder != null &&
                                      chunksToPersist != null;
 
         public Bounds Bounds => bounds;
@@ -123,12 +145,6 @@ namespace Digger
             get => persistenceSubPath;
             set => persistenceSubPath = value;
         }
-
-#if UNITY_EDITOR
-        private static bool PersistModificationsInPlayMode =>
-            EditorPrefs.GetBool(DiggerMaster.PersistModificationsInPlayModeEditorKey, true);
-
-#endif
 
         private string GetPathDiggerVersionFile()
         {
@@ -179,12 +195,13 @@ namespace Digger
 
         public string GetPathVersionedVoxelFile(Vector3i chunkPosition, long v)
         {
-            return Path.ChangeExtension(GetEditorOnlyPathVoxelFile(chunkPosition), $"vox_v{v}");
+            return Path.ChangeExtension(GetEditorOnlyPathVoxelFile(chunkPosition), $"{VoxelFileExtension}_v{v}");
         }
 
         public string GetPathVersionedVoxelMetadataFile(Vector3i chunkPosition, long v)
         {
-            return Path.ChangeExtension(GetEditorOnlyPathVoxelMetadataFile(chunkPosition), $"vom_v{v}");
+            return Path.ChangeExtension(GetEditorOnlyPathVoxelMetadataFile(chunkPosition),
+                $"{VoxelMetadataFileExtension}_v{v}");
         }
 
         public string GetTransparencyMapPath()
@@ -220,13 +237,22 @@ namespace Digger
             colliderStates = new Dictionary<Collider, int>(new ColliderComparer());
         }
 
-        public void PersistAndRecordUndo()
+        public void PersistAndRecordUndo(bool force, bool removeUselessChunks)
         {
 #if UNITY_EDITOR
+            if (!needRecordUndo && !force)
+                return;
+
+            Utils.Profiler.BeginSample("PersistAndRecordUndo");
             CreateDirs();
 
+            if (removeUselessChunks) {
+                RemoveUselessChunks();
+            }
+
             foreach (var chunkToPersist in chunksToPersist) {
-                chunkToPersist.Persist();
+                if (chunks.ContainsKey(chunkToPersist.ChunkPosition))
+                    chunkToPersist.Persist();
             }
 
             chunksToPersist.Clear();
@@ -241,32 +267,53 @@ namespace Digger
 
             File.WriteAllText(GetPathVersionFile(version), JsonUtility.ToJson(versionInfo));
 
+            Utils.Profiler.BeginSample("Save cutter");
             cutter.SaveTo(GetVersionedTransparencyMapPath(version));
+            Utils.Profiler.EndSample();
 
+            Utils.Profiler.BeginSample("RegisterCompleteObjectUndo");
             Undo.RegisterCompleteObjectUndo(this, "Digger edit");
+            Utils.Profiler.EndSample();
+
+            Utils.Profiler.BeginSample("PersistVersion");
             ++version;
             PersistVersion();
+            Utils.Profiler.EndSample();
+
+            needRecordUndo = false;
+            Utils.Profiler.EndSample();
 #endif
         }
 
         public void DoUndo()
         {
 #if UNITY_EDITOR
-            if (!Terrain || !cutter || !Directory.Exists(InternalPathData) ||
-                !File.Exists(GetPathVersionFile(PreviousVersion))) {
+            if (!CanUndo) {
+                Utils.D.Log($"Cannot undo terrain {Terrain.name} to previous version {PreviousVersion}");
                 ++version;
                 PersistVersion();
                 Undo.ClearUndo(this);
                 return;
             }
 
+            var versionBeforeUndo = GetLastPersistedVersion();
+            if (versionBeforeUndo == version) {
+                Utils.D.Log($"No need to sync terrain {Terrain.name} to version {PreviousVersion}");
+                return;
+            }
+
+            Utils.D.Log($"Sync terrain {Terrain.name} to version {PreviousVersion}");
+            PersistVersion();
             var versionInfo = JsonUtility.FromJson<VersionInfo>(File.ReadAllText(GetPathVersionFile(PreviousVersion)));
 
             UndoRedoFiles();
-            Reload(true, false);
+            Reload(LoadType.Minimal_and_LoadVoxels_and_RebuildMeshes);
             SyncChunksWithVersion(versionInfo);
 #endif
         }
+
+        private bool CanUndo => Application.isEditor && Terrain && cutter && Directory.Exists(InternalPathData) &&
+                                File.Exists(GetPathVersionFile(PreviousVersion));
 
         public void PersistDiggerVersion()
         {
@@ -292,28 +339,30 @@ namespace Digger
 #if UNITY_EDITOR
             CreateDirs();
             EditorUtils.CreateOrReplaceAsset(new TextAsset(version.ToString()), GetPathCurrentVersionFile());
+            Utils.D.Log($"PersistVersion of {Terrain.name} with value {version}");
 #endif
         }
 
-        public void ReloadVersion()
+        private long GetLastPersistedVersion()
         {
 #if UNITY_EDITOR
             var verAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(GetPathCurrentVersionFile());
             if (verAsset) {
-                version = Convert.ToInt64(verAsset.text);
+                return Convert.ToInt64(verAsset.text);
             }
 #endif
+            return 0;
         }
 
         private void UndoRedoFiles()
         {
             var dir = new DirectoryInfo(InternalPathData);
-            foreach (var file in dir.EnumerateFiles($"*.vox_v{PreviousVersion}")) {
+            foreach (var file in dir.EnumerateFiles($"*.{VoxelFileExtension}_v{PreviousVersion}")) {
                 var bytesFilePath = Path.ChangeExtension(file.FullName, VoxelFileExtension);
                 File.Copy(file.FullName, bytesFilePath, true);
             }
 
-            foreach (var file in dir.EnumerateFiles($"*.vom_v{PreviousVersion}")) {
+            foreach (var file in dir.EnumerateFiles($"*.{VoxelMetadataFileExtension}_v{PreviousVersion}")) {
                 var bytesFilePath = Path.ChangeExtension(file.FullName, VoxelMetadataFileExtension);
                 File.Copy(file.FullName, bytesFilePath, true);
             }
@@ -349,7 +398,7 @@ namespace Digger
         private void DeleteOtherVersions(bool lower, long comparandVersion)
         {
 #if UNITY_EDITOR
-            if (Application.isPlaying && !PersistModificationsInPlayMode)
+            if (Application.isPlaying)
                 return;
 
             if (!Directory.Exists(InternalPathData))
@@ -361,13 +410,15 @@ namespace Digger
             foreach (var verFile in dir.EnumerateFiles($"version_*.{VersionFileExtension}")) {
                 long versionToRemove;
                 if (long.TryParse(verFile.Name.Replace("version_", "").Replace($".{VersionFileExtension}", ""),
-                                  out versionToRemove)
-                    && (!lower && versionToRemove >= comparandVersion || lower && versionToRemove <= comparandVersion)) {
-                    foreach (var voxFile in dir.EnumerateFiles($"*.vox_v{versionToRemove}")) {
+                        out versionToRemove)
+                    && (!lower && versionToRemove >= comparandVersion ||
+                        lower && versionToRemove <= comparandVersion)) {
+                    foreach (var voxFile in dir.EnumerateFiles($"*.{VoxelFileExtension}_v{versionToRemove}")) {
                         voxFile.Delete();
                     }
 
-                    foreach (var voxMetadataFile in dir.EnumerateFiles($"*.vom_v{versionToRemove}")) {
+                    foreach (var voxMetadataFile in dir.EnumerateFiles(
+                        $"*.{VoxelMetadataFileExtension}_v{versionToRemove}")) {
                         voxMetadataFile.Delete();
                     }
 
@@ -414,25 +465,33 @@ namespace Digger
         /// <summary>
         /// Initialize Digger and eventually reloads chunks
         /// </summary>
-        /// <param name="forceRefresh"></param>
-        public void Init(bool forceRefresh)
+        public void Init(LoadType loadType)
         {
             var terrainData = Terrain.terrainData;
             heightmapScale = terrainData.heightmapScale / master.ResolutionMult;
             heightmapScale.y = 1f / master.ResolutionMult;
 #if UNITY_2019_3_OR_NEWER
             holeMapScale =
- new Vector3(terrainData.size.x / terrainData.holesResolution, 1f, terrainData.size.z / terrainData.holesResolution);
+                new Vector3(terrainData.size.x / terrainData.holesResolution, 1f, terrainData.size.z / terrainData.holesResolution);
 #else
             holeMapScale = new Vector3(terrainData.size.x / terrainData.alphamapWidth, 1f,
-                                       terrainData.size.z / terrainData.alphamapHeight);
+                terrainData.size.z / terrainData.alphamapHeight);
 #endif
-            Reload(forceRefresh, forceRefresh);
+            var persistedVersion = GetLastPersistedVersion();
+            if (persistedVersion != Version && CanUndo) {
+                Debug.LogWarning(
+                    $"Digger of terrain {terrainData.name} Version is {Version} but PersistedVersion is {persistedVersion}. Re-syncing...");
+                DoUndo();
+            }
+            else {
+                Reload(loadType);
+            }
         }
 
 
-        public void Reload(bool rebuildMeshes, bool removeUselessChunks)
+        private void Reload(LoadType loadType)
         {
+            Utils.D.Log($"Reloading with LoadType = {loadType}");
             Utils.Profiler.BeginSample("[Dig] Reload");
             CreateDirs();
 
@@ -474,19 +533,16 @@ namespace Digger
                         Debug.LogError("Chunk is badly defined. Missing/wrong cutter and/or digger reference.");
                     }
 
-                    if (!rebuildMeshes) {
+                    if (!loadType.RebuildMeshes) {
                         chunks.Add(chunk.ChunkPosition, chunk);
-                    } else {
+                    }
+                    else {
                         DestroyImmediate(child.gameObject);
                     }
                 }
             }
 
-            LoadChunks(rebuildMeshes);
-
-            if (removeUselessChunks) {
-                RemoveUselessChunks();
-            }
+            LoadChunks(loadType);
 
             ComputeBounds();
             UpdateStaticEditorFlags();
@@ -528,14 +584,17 @@ namespace Digger
 
         private bool GetOrCreateChunk(Vector3i position, out Chunk chunk)
         {
+            Utils.Profiler.BeginSample("[Dig] GetOrCreateChunk");
             if (!chunks.TryGetValue(position, out chunk)) {
                 chunk = Chunk.CreateChunk(position, this, Terrain, Materials, Layer);
                 chunks.Add(position, chunk);
                 var b = GetChunkBounds();
                 ExpandBounds(chunk.WorldPosition, chunk.WorldPosition + b.size);
+                Utils.Profiler.EndSample();
                 return false;
             }
 
+            Utils.Profiler.EndSample();
             return true;
         }
 
@@ -545,12 +604,13 @@ namespace Digger
         }
 
         public bool Modify(BrushType brush, ActionType action, float intensity, Vector3 operationWorldPosition,
-                           float radius, float coneHeight, bool upsideDown, int textureIndex, bool cutDetails)
+            float radius, float coneHeight, bool upsideDown, int textureIndex, bool cutDetails, bool isTargetIntensity)
         {
             Utils.Profiler.BeginSample("[Dig] Modify");
-            CreateDirs();
-
-            DeleteOtherVersions(false, version);
+            if (action != ActionType.Paint && intensity < 0f) {
+                Debug.LogWarning("Opacity can only be negative when action type is 'Paint'");
+                return false;
+            }
 
             var operationTerrainPosition = operationWorldPosition - Terrain.transform.position;
             var p = operationTerrainPosition;
@@ -586,6 +646,10 @@ namespace Digger
                 return false;
             }
 
+            needRecordUndo = true;
+            CreateDirs();
+            DeleteOtherVersions(false, version);
+
             if (min.x < 0)
                 min.x = 0;
             if (min.z < 0)
@@ -594,11 +658,13 @@ namespace Digger
                 max.x = TerrainChunkWidth;
             if (max.z > TerrainChunkHeight)
                 max.z = TerrainChunkHeight;
-
+            
             builtChunks.Clear();
             for (var x = min.x; x <= max.x; ++x) {
                 for (var z = min.z; z <= max.z; ++z) {
+#if !UNITY_2019_3_OR_NEWER
                     var uncutDone = false;
+#endif
                     for (var y = min.y; y <= max.y; ++y) {
                         var cp = new Vector3i(x, y, z);
                         if (builtChunks.ContainsKey(cp))
@@ -606,25 +672,23 @@ namespace Digger
 
                         GetOrCreateChunk(cp, out var chunk);
                         builtChunks.Add(cp, chunk);
+#if !UNITY_2019_3_OR_NEWER
                         if (!uncutDone && action == ActionType.Reset) {
                             uncutDone = true;
                             chunk.UnCutAllVertically();
                         }
-
+#endif
                         chunk.Modify(brush, action, intensity, operationTerrainPosition, radius, coneHeight, upsideDown,
-                                     textureIndex, cutDetails);
+                            textureIndex, cutDetails, isTargetIntensity);
                     }
                 }
             }
 
             switch (action) {
-                case ActionType.Reset:
-                    RemoveUselessChunks();
-                    break;
                 case ActionType.Smooth:
                 case ActionType.BETA_Sharpen:
                     foreach (var chunkEntry in builtChunks) {
-                        chunkEntry.Value.VoxelChunk.ClearVoxelArrayBeforeSmooth();
+                        chunkEntry.Value.PrepareKernelOperation();
                     }
 
                     break;
@@ -649,34 +713,42 @@ namespace Digger
                         return GetDiggerSystemOf(Terrain.leftNeighbor.bottomNeighbor);
                     if (Terrain.bottomNeighbor)
                         return GetDiggerSystemOf(Terrain.bottomNeighbor.leftNeighbor);
-                } else if (chunkPosition.z > TerrainChunkHeight) {
+                }
+                else if (chunkPosition.z > TerrainChunkHeight) {
                     if (Terrain.leftNeighbor)
                         return GetDiggerSystemOf(Terrain.leftNeighbor.topNeighbor);
                     if (Terrain.topNeighbor)
                         return GetDiggerSystemOf(Terrain.topNeighbor.leftNeighbor);
-                } else {
+                }
+                else {
                     return GetDiggerSystemOf(Terrain.leftNeighbor);
                 }
-            } else if (chunkPosition.x > TerrainChunkWidth) {
+            }
+            else if (chunkPosition.x > TerrainChunkWidth) {
                 if (chunkPosition.z < 0) {
                     if (Terrain.rightNeighbor)
                         return GetDiggerSystemOf(Terrain.rightNeighbor.bottomNeighbor);
                     if (Terrain.bottomNeighbor)
                         return GetDiggerSystemOf(Terrain.bottomNeighbor.rightNeighbor);
-                } else if (chunkPosition.z > TerrainChunkHeight) {
+                }
+                else if (chunkPosition.z > TerrainChunkHeight) {
                     if (Terrain.rightNeighbor)
                         return GetDiggerSystemOf(Terrain.rightNeighbor.topNeighbor);
                     if (Terrain.topNeighbor)
                         return GetDiggerSystemOf(Terrain.topNeighbor.rightNeighbor);
-                } else {
+                }
+                else {
                     return GetDiggerSystemOf(Terrain.rightNeighbor);
                 }
-            } else {
+            }
+            else {
                 if (chunkPosition.z < 0) {
                     return GetDiggerSystemOf(Terrain.bottomNeighbor);
-                } else if (chunkPosition.z > TerrainChunkHeight) {
+                }
+                else if (chunkPosition.z > TerrainChunkHeight) {
                     return GetDiggerSystemOf(Terrain.topNeighbor);
-                } else {
+                }
+                else {
                     return this;
                 }
             }
@@ -795,9 +867,12 @@ namespace Digger
 
         public void EnsureChunkWillBePersisted(VoxelChunk voxelChunk)
         {
+            Utils.Profiler.BeginSample("[Dig] EnsureChunkWillBePersisted");
             if (!disablePersistence) {
                 chunksToPersist.Add(voxelChunk);
             }
+            
+            Utils.Profiler.EndSample();
         }
 
         private void RemoveUselessChunks()
@@ -805,7 +880,7 @@ namespace Digger
             var chunksToRemove = new List<Chunk>();
             foreach (var chunk in chunks) {
                 if (IsUseless(chunk.Key)) {
-                    Debug.Log("[Digger] Cleaning chunk at " + chunk.Key);
+                    Utils.D.Log("[Digger] Cleaning chunk at " + chunk.Key);
                     chunksToRemove.Add(chunk.Value);
                 }
             }
@@ -832,30 +907,33 @@ namespace Digger
 
             if (Application.isEditor) {
                 DestroyImmediate(chunk.gameObject);
-            } else {
+            }
+            else {
                 Destroy(chunk.gameObject);
             }
         }
 
         private bool IsUseless(Vector3i chunkPosition)
         {
-            Chunk chunk;
-            if (!chunks.TryGetValue(chunkPosition, out chunk))
+            if (!chunks.TryGetValue(chunkPosition, out var chunk))
                 return false; // if it doesn't exist, it doesn't need to be removed
             if (chunk.HasVisualMesh)
                 return false; // if it has a visual mesh, it must not be removed
             foreach (var direction in Vector3i.allDirections) {
-                Chunk neighbour;
-                if (!chunks.TryGetValue(chunkPosition + direction, out neighbour))
+                if (!chunks.TryGetValue(chunkPosition + direction, out var neighbour))
                     continue;
                 if (neighbour.NeedsNeighbour(-direction))
                     return false; // if one of the chunk's neighbours need it, it must not be removed
             }
 
+            // we do this test last because it is slow
+            if (chunk.VoxelChunk && chunk.VoxelChunk.HasAlteredVoxels())
+                return false; // if it has altered voxels, it must not be removed
+
             return true;
         }
 
-        private void LoadChunks(bool rebuildMeshes)
+        private void LoadChunks(LoadType loadType)
         {
 #if UNITY_EDITOR
             var path = InternalPathData;
@@ -867,36 +945,61 @@ namespace Digger
                 return;
             }
 
-            foreach (var chunk in chunks) {
-                chunk.Value.Load(rebuildMeshes);
+
+            if (loadType.LoadVoxels) {
+                foreach (var chunk in chunks) {
+                    LoadChunk(loadType.RebuildMeshes, loadType.SyncVoxelsWithTerrain, chunk.Value);
+                }
             }
 
-            LoadChunksFromDir(rebuildMeshes, new DirectoryInfo(path));
+            LoadChunksFromDir(loadType, new DirectoryInfo(path));
 #else
             if (chunks == null) {
                 Debug.LogError("Chunks dico should not be null in loading");
                 return;
             }
 
-            foreach (var chunk in chunks) {
-                chunk.Value.Load(rebuildMeshes);
+            if (loadType.LoadVoxels) {
+                foreach (var chunk in chunks) {
+                    LoadChunk(loadType.RebuildMeshes, loadType.SyncVoxelsWithTerrain, chunk.Value);
+                }
             }
+
+            LoadChunksFromDir(loadType, new DirectoryInfo(PersistentRuntimePathData));
+            LoadChunksFromStreamingAssetsDir(loadType);
 #endif
         }
 
-        private void LoadChunksFromDir(bool rebuildMeshes, DirectoryInfo dir)
+        private void LoadChunksFromDir(LoadType loadType, DirectoryInfo dir)
         {
             if (!dir.Exists)
                 return;
 
             foreach (var file in dir.EnumerateFiles($"*.{VoxelFileExtension}")) {
                 var chunkPosition = Chunk.GetPositionFromName(file.Name);
-                if (!chunks.ContainsKey(chunkPosition) && chunkPosition.x >= 0 && chunkPosition.z >= 0 &&
-                    chunkPosition.x <= TerrainChunkWidth && chunkPosition.z <= TerrainChunkHeight) {
-                    Chunk chunk;
-                    GetOrCreateChunk(chunkPosition, out chunk);
-                    chunk.Load(rebuildMeshes);
+                LoadChunkFromFile(loadType, chunkPosition);
+            }
+        }
+
+        private void LoadChunkFromFile(LoadType loadType, Vector3i chunkPosition)
+        {
+            if (!chunks.ContainsKey(chunkPosition) && chunkPosition.x >= 0 && chunkPosition.z >= 0 &&
+                chunkPosition.x <= TerrainChunkWidth && chunkPosition.z <= TerrainChunkHeight) {
+                var chunkAlreadyExisted = GetOrCreateChunk(chunkPosition, out var chunk);
+                if (loadType.LoadVoxels || !chunkAlreadyExisted) {
+                    LoadChunk(loadType.RebuildMeshes || !chunkAlreadyExisted, loadType.SyncVoxelsWithTerrain, chunk);
+                    if (!chunkAlreadyExisted)
+                        Utils.D.Log(
+                            $"Rebuilt mesh of chunk {chunk.ChunkPosition} because it was missing from dictionary");
                 }
+            }
+        }
+
+        private static void LoadChunk(bool rebuildMeshes, bool syncVoxelsWithTerrain, Chunk chunk)
+        {
+            var hasNewVoxelChunk = chunk.LoadVoxels(syncVoxelsWithTerrain);
+            if (rebuildMeshes || hasNewVoxelChunk) {
+                chunk.RebuildMeshes();
             }
         }
 
@@ -914,10 +1017,11 @@ namespace Digger
         {
 #if UNITY_EDITOR
             Utils.Profiler.BeginSample("[Dig] Clear");
-            cutter.Clear();
-            cutter = null;
+            if (cutter != null) {
+                cutter.Clear();
+                cutter = null;
+            }
 
-            AssetDatabase.StartAssetEditing();
             if (Directory.Exists(BasePathData)) {
                 Directory.Delete(BasePathData, true);
                 AssetDatabase.DeleteAsset(BasePathData);
@@ -927,7 +1031,8 @@ namespace Digger
                 foreach (var chunk in chunks) {
                     if (Application.isEditor) {
                         DestroyImmediate(chunk.Value.gameObject);
-                    } else {
+                    }
+                    else {
                         Destroy(chunk.Value.gameObject);
                     }
                 }
@@ -940,29 +1045,32 @@ namespace Digger
 
             version = 1;
             PersistVersion();
-            AssetDatabase.StopAssetEditing();
 
+            if (materialType == TerrainMaterialType.Standard || materialType == TerrainMaterialType.URP ||
+                materialType == TerrainMaterialType.LWRP || materialType == TerrainMaterialType.HDRP) {
 #if UNITY_2019_3_OR_NEWER
-            if (GraphicsSettings.currentRenderPipeline != null) {
-                Terrain.materialTemplate = GraphicsSettings.currentRenderPipeline.defaultTerrainMaterial;
-            } else {
-                Terrain.materialTemplate =
- AssetDatabase.GetBuiltinExtraResource<Material>("Default-Terrain-Standard.mat");
-            }
+                if (GraphicsSettings.currentRenderPipeline != null) {
+                    Terrain.materialTemplate = GraphicsSettings.currentRenderPipeline.defaultTerrainMaterial;
+                } else {
+                    Terrain.materialTemplate =
+                        AssetDatabase.GetBuiltinExtraResource<Material>("Default-Terrain-Standard.mat");
+                }
 #elif UNITY_2019_1_OR_NEWER
-            if (GraphicsSettings.renderPipelineAsset != null) {
-                Terrain.materialTemplate = GraphicsSettings.renderPipelineAsset.defaultTerrainMaterial;
-            } else {
-                Terrain.materialTemplate =
- AssetDatabase.GetBuiltinExtraResource<Material>("Default-Terrain-Standard.mat");
-            }
+                if (GraphicsSettings.renderPipelineAsset != null) {
+                    Terrain.materialTemplate = GraphicsSettings.renderPipelineAsset.defaultTerrainMaterial;
+                } else {
+                    Terrain.materialTemplate =
+     AssetDatabase.GetBuiltinExtraResource<Material>("Default-Terrain-Standard.mat");
+                }
 #else
-            if (GraphicsSettings.renderPipelineAsset != null) {
-                Terrain.materialTemplate = GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial();
-            } else {
-                Terrain.materialType = Terrain.MaterialType.BuiltInStandard;
-            }
+                if (GraphicsSettings.renderPipelineAsset != null) {
+                    Terrain.materialTemplate = GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial();
+                }
+                else {
+                    Terrain.materialType = Terrain.MaterialType.BuiltInStandard;
+                }
 #endif
+            }
 
             Undo.ClearAll();
             Utils.Profiler.EndSample();
@@ -973,6 +1081,7 @@ namespace Digger
         {
 #if UNITY_EDITOR
             master.CreateDirs();
+            basePathData = ComputeBasePathData();
 
             if (!Directory.Exists(BasePathData)) {
                 AssetDatabase.CreateFolder(master.SceneDataPath, BaseFolder);
@@ -983,17 +1092,17 @@ namespace Digger
             }
 #endif
         }
+        
 
-
+#if UNITY_EDITOR
         private void OnDestroy()
         {
-#if UNITY_EDITOR
-            if (!PersistModificationsInPlayMode && Application.isEditor && Application.isPlaying) {
+            if (Application.isEditor && Application.isPlaying) {
                 if (cutter) {
                     cutter.OnExitPlayMode();
                 }
             }
-#endif
         }
+#endif
     }
 }

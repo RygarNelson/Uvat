@@ -3,6 +3,10 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+#if __MICROSPLAT_DIGGER__
+using JBooth.MicroSplat;
+
+#endif
 
 namespace Digger
 {
@@ -17,6 +21,7 @@ namespace Digger
         private static readonly int TerrainHeightInvProperty = Shader.PropertyToID("_TerrainHeightInv");
         private const string SplatPrefixProperty = "_Splat";
         private const string NormalPrefixProperty = "_Normal";
+        private const string MaskPrefixProperty = "_Mask";
 
         public void OnEnable()
         {
@@ -26,10 +31,13 @@ namespace Digger
 
         public override void OnInspectorGUI()
         {
-            EditorGUILayout.HelpBox($"Digger data for this terrain can be found in {diggerSystem.BasePathData}", MessageType.Info);
-            EditorGUILayout.HelpBox($"Raw voxel data can be found in {diggerSystem.BasePathData}/.internal", MessageType.Info);
+            EditorGUILayout.HelpBox($"Digger data for this terrain can be found in {diggerSystem.BasePathData}",
+                                    MessageType.Info);
+            EditorGUILayout.HelpBox($"Raw voxel data can be found in {diggerSystem.BasePathData}/.internal",
+                                    MessageType.Info);
             EditorGUILayout.HelpBox("DO NOT CHANGE / RENAME / MOVE this folder.", MessageType.Warning);
-            EditorGUILayout.HelpBox("Don\'t forget to backup this folder as well when you backup your project.", MessageType.Warning);
+            EditorGUILayout.HelpBox("Don\'t forget to backup this folder as well when you backup your project.",
+                                    MessageType.Warning);
 
             EditorGUILayout.LabelField("Use Digger Master to start digging.");
 
@@ -37,7 +45,8 @@ namespace Digger
             if (showDebug != diggerSystem.ShowDebug) {
                 diggerSystem.ShowDebug = showDebug;
                 foreach (Transform child in diggerSystem.transform) {
-                    child.gameObject.hideFlags = showDebug ? HideFlags.None : HideFlags.HideInHierarchy | HideFlags.HideInInspector;
+                    child.gameObject.hideFlags =
+                        showDebug ? HideFlags.None : HideFlags.HideInHierarchy | HideFlags.HideInInspector;
                 }
 
                 EditorApplication.DirtyHierarchyWindowSorting();
@@ -62,9 +71,10 @@ namespace Digger
             if (diggerSystem.Materials == null || forceRefresh)
                 SetupMaterial(diggerSystem, forceRefresh);
 
-            diggerSystem.Init(forceRefresh);
+            diggerSystem.Init(forceRefresh ? LoadType.Minimal_and_LoadVoxels_and_SyncVoxelsWithTerrain_and_RebuildMeshes : LoadType.Minimal);
             if (forceRefresh) {
                 diggerSystem.PersistDiggerVersion();
+                diggerSystem.PersistAndRecordUndo(true, false);
             }
         }
 
@@ -76,6 +86,10 @@ namespace Digger
                 diggerSystem.MaterialType = TerrainMaterialType.CTS;
                 Debug.Log("Setting up Digger with CTS shaders");
                 SetupCTSMaterial(diggerSystem);
+            } else if (EditorUtils.MicroSplatExists(diggerSystem.Terrain)) {
+                diggerSystem.MaterialType = TerrainMaterialType.MicroSplat;
+                Debug.Log("Setting up Digger with MicroSplat shaders");
+                SetupMicroSplatMaterials(diggerSystem);
             } else if (IsBuiltInURP()) {
                 diggerSystem.MaterialType = TerrainMaterialType.URP;
                 Debug.Log("Setting up Digger with URP shaders");
@@ -84,6 +98,10 @@ namespace Digger
                 diggerSystem.MaterialType = TerrainMaterialType.LWRP;
                 Debug.Log("Setting up Digger with LWRP shaders");
                 SetupLWRPMaterials(diggerSystem, forceRefresh);
+            } else if (IsBuiltInHDRP()) {
+                diggerSystem.MaterialType = TerrainMaterialType.HDRP;
+                Debug.Log("Setting up Digger with HDRP shaders");
+                SetupHDRPMaterials(diggerSystem, forceRefresh);
             } else {
                 diggerSystem.MaterialType = TerrainMaterialType.Standard;
                 Debug.Log("Setting up Digger with standard shaders");
@@ -100,7 +118,9 @@ namespace Digger
 #elif UNITY_2019_1_OR_NEWER
             return GraphicsSettings.renderPipelineAsset != null && GraphicsSettings.renderPipelineAsset.defaultTerrainMaterial.shader.name == "Lightweight Render Pipeline/Terrain/Lit";
 #else
-            return GraphicsSettings.renderPipelineAsset != null && GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial().shader.name == "Lightweight Render Pipeline/Terrain/Lit";
+            return GraphicsSettings.renderPipelineAsset != null &&
+                   GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial().shader.name ==
+                   "Lightweight Render Pipeline/Terrain/Lit";
 #endif
         }
 
@@ -111,7 +131,21 @@ namespace Digger
 #elif UNITY_2019_1_OR_NEWER
             return GraphicsSettings.renderPipelineAsset != null && GraphicsSettings.renderPipelineAsset.defaultTerrainMaterial.shader.name == "Universal Render Pipeline/Terrain/Lit";
 #else
-            return GraphicsSettings.renderPipelineAsset != null && GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial().shader.name == "Universal Render Pipeline/Terrain/Lit";
+            return GraphicsSettings.renderPipelineAsset != null &&
+                   GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial().shader.name ==
+                   "Universal Render Pipeline/Terrain/Lit";
+#endif
+        }
+
+        private static bool IsBuiltInHDRP()
+        {
+#if UNITY_2019_3_OR_NEWER
+            return GraphicsSettings.currentRenderPipeline != null && GraphicsSettings.currentRenderPipeline.defaultTerrainMaterial.shader.name == "HDRP/TerrainLit";
+#elif UNITY_2019_1_OR_NEWER
+            return GraphicsSettings.renderPipelineAsset != null && GraphicsSettings.renderPipelineAsset.defaultTerrainMaterial.shader.name == "HDRP/TerrainLit";
+#else
+            return GraphicsSettings.renderPipelineAsset != null &&
+                   GraphicsSettings.renderPipelineAsset.GetDefaultTerrainMaterial().shader.name == "HDRP/TerrainLit";
 #endif
         }
 
@@ -120,12 +154,14 @@ namespace Digger
 
         private static void SetupStandardTerrainMaterial(DiggerSystem diggerSystem, bool forceRefresh)
         {
-            if (forceRefresh || !diggerSystem.Terrain.materialTemplate || diggerSystem.Terrain.materialTemplate.shader.name != "Nature/Terrain/Digger/Cuttable-Triplanar") {
+            if (forceRefresh || !diggerSystem.Terrain.materialTemplate ||
+                diggerSystem.Terrain.materialTemplate.shader.name != "Nature/Terrain/Digger/Cuttable-Triplanar") {
 #if !UNITY_2019_2_OR_NEWER
                 diggerSystem.Terrain.materialType = Terrain.MaterialType.Custom;
 #endif
                 var terrainMaterial = new Material(Shader.Find("Nature/Terrain/Digger/Cuttable-Triplanar"));
-                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial, Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
+                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial,
+                                                                   Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
                 terrainMaterial.SetFloat(TerrainWidthInvProperty, 1f / diggerSystem.Terrain.terrainData.size.x);
                 terrainMaterial.SetFloat(TerrainHeightInvProperty, 1f / diggerSystem.Terrain.terrainData.size.z);
                 diggerSystem.Terrain.materialTemplate = terrainMaterial;
@@ -194,12 +230,14 @@ namespace Digger
 
         private static void SetupLWRPTerrainMaterial(DiggerSystem diggerSystem, bool forceRefresh)
         {
-            if (forceRefresh || !diggerSystem.Terrain.materialTemplate || diggerSystem.Terrain.materialTemplate.shader.name != "Digger/LWRP/Terrain/Lit") {
+            if (forceRefresh || !diggerSystem.Terrain.materialTemplate ||
+                diggerSystem.Terrain.materialTemplate.shader.name != "Digger/LWRP/Terrain/Lit") {
 #if !UNITY_2019_2_OR_NEWER
                 diggerSystem.Terrain.materialType = Terrain.MaterialType.Custom;
 #endif
                 var terrainMaterial = new Material(Shader.Find("Digger/LWRP/Terrain/Lit"));
-                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial, Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
+                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial,
+                                                                   Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
                 terrainMaterial.SetFloat(TerrainWidthInvProperty, 1f / diggerSystem.Terrain.terrainData.size.x);
                 terrainMaterial.SetFloat(TerrainHeightInvProperty, 1f / diggerSystem.Terrain.terrainData.size.z);
                 diggerSystem.Terrain.materialTemplate = terrainMaterial;
@@ -268,9 +306,11 @@ namespace Digger
 
         private static void SetupURPTerrainMaterial(DiggerSystem diggerSystem, bool forceRefresh)
         {
-            if (forceRefresh || !diggerSystem.Terrain.materialTemplate || diggerSystem.Terrain.materialTemplate.shader.name != "Digger/URP/Terrain/Lit") {
+            if (forceRefresh || !diggerSystem.Terrain.materialTemplate ||
+                diggerSystem.Terrain.materialTemplate.shader.name != "Digger/URP/Terrain/Lit") {
                 var terrainMaterial = new Material(Shader.Find("Digger/URP/Terrain/Lit"));
-                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial, Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
+                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial,
+                                                                   Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
                 terrainMaterial.SetFloat(TerrainWidthInvProperty, 1f / diggerSystem.Terrain.terrainData.size.x);
                 terrainMaterial.SetFloat(TerrainHeightInvProperty, 1f / diggerSystem.Terrain.terrainData.size.z);
                 diggerSystem.Terrain.materialTemplate = terrainMaterial;
@@ -335,6 +375,200 @@ namespace Digger
         #endregion
 
 
+        #region HDRP
+
+        private static void SetupHDRPTerrainMaterial(DiggerSystem diggerSystem, bool forceRefresh)
+        {
+            if (forceRefresh || !diggerSystem.Terrain.materialTemplate ||
+                diggerSystem.Terrain.materialTemplate.shader.name != "Digger/HDRP/Terrain/Lit") {
+                var terrainMaterial = new Material(Shader.Find("Digger/HDRP/Terrain/Lit"));
+                terrainMaterial = EditorUtils.CreateOrReplaceAsset(terrainMaterial,
+                                                                   Path.Combine(diggerSystem.BasePathData, "terrainMaterial.mat"));
+                terrainMaterial.SetFloat(TerrainWidthInvProperty, 1f / diggerSystem.Terrain.terrainData.size.x);
+                terrainMaterial.SetFloat(TerrainHeightInvProperty, 1f / diggerSystem.Terrain.terrainData.size.z);
+                diggerSystem.Terrain.materialTemplate = terrainMaterial;
+            }
+
+            if (diggerSystem.Terrain.materialTemplate.shader.name != "Digger/HDRP/Terrain/Lit")
+                Debug.LogWarning("Looks like terrain material doesn't match cave meshes material.");
+        }
+
+        private static void SetupHDRPMaterials(DiggerSystem diggerSystem, bool forceRefresh)
+        {
+            SetupHDRPTerrainMaterial(diggerSystem, forceRefresh);
+
+            if (diggerSystem.Materials == null || diggerSystem.Materials.Length != 1) {
+                diggerSystem.Materials = new Material[1];
+            }
+
+            var textures = new List<Texture2D>();
+            SetupHDRPMaterial(diggerSystem, textures);
+
+            diggerSystem.TerrainTextures = textures.ToArray();
+        }
+
+        private static void SetupHDRPMaterial(DiggerSystem diggerSystem, List<Texture2D> textures)
+        {
+            var material = new Material(Shader.Find("Digger/HDRP/Mesh/Lit"));
+
+
+            var tData = diggerSystem.Terrain.terrainData;
+            if (tData.terrainLayers.Length > 4) {
+                material.EnableKeyword("_TERRAIN_8_LAYERS");
+            }
+
+            var enableMaskMap = false;
+
+            for (var i = 0; i < tData.terrainLayers.Length && i < 8; i++) {
+                var terrainLayer = tData.terrainLayers[i];
+                if (terrainLayer == null || terrainLayer.diffuseTexture == null)
+                    continue;
+
+                if (terrainLayer.maskMapTexture) {
+                    enableMaskMap = true;
+                }
+
+                material.SetFloat($"_NormalScale{i}", terrainLayer.normalScale);
+                material.SetVector($"_MaskMapRemapOffset{i}", Vector4.zero);
+                material.SetVector($"_MaskMapRemapScale{i}", Vector4.one);
+                material.SetVector($"_DiffuseRemapScale{i}", Vector4.one);
+                material.SetFloat($"_LayerHasMask{i}", terrainLayer.maskMapTexture ? 1f : 0f);
+                material.SetFloat($"_Metallic{i}", terrainLayer.metallic);
+                material.SetFloat($"_Smoothness{i}", terrainLayer.smoothness);
+                material.SetTexture(SplatPrefixProperty + i, terrainLayer.diffuseTexture);
+                material.SetTexture(NormalPrefixProperty + i, terrainLayer.normalMapTexture);
+                material.SetTexture(MaskPrefixProperty + i, terrainLayer.maskMapTexture);
+                material.SetTextureScale(SplatPrefixProperty + i,
+                                         new Vector2(1f / terrainLayer.tileSize.x, 1f / terrainLayer.tileSize.y));
+                material.SetTextureOffset(SplatPrefixProperty + i, terrainLayer.tileOffset);
+                textures.Add(terrainLayer.diffuseTexture);
+            }
+
+            if (enableMaskMap) {
+                material.EnableKeyword("_MASKMAP");
+            }
+
+            var matPath = Path.Combine(diggerSystem.BasePathData, $"meshMaterialPass.mat");
+            material = EditorUtils.CreateOrReplaceAsset(material, matPath);
+            AssetDatabase.ImportAsset(matPath, ImportAssetOptions.ForceUpdate);
+            diggerSystem.Materials[0] = material;
+        }
+
+        #endregion
+
+        #region MicroSplat
+
+        private static void SetupMicroSplatMaterials(DiggerSystem diggerSystem)
+        {
+            if (diggerSystem.Materials == null || diggerSystem.Materials.Length != 1) {
+                diggerSystem.Materials = new Material[1];
+            }
+
+            var textures = new List<Texture2D>();
+            var tData = diggerSystem.Terrain.terrainData;
+
+            for (var i = 0; i < tData.terrainLayers.Length && i < 28; i++) {
+                var terrainLayer = tData.terrainLayers[i];
+                if (terrainLayer == null || terrainLayer.diffuseTexture == null)
+                    continue;
+
+                textures.Add(terrainLayer.diffuseTexture);
+            }
+
+            diggerSystem.TerrainTextures = textures.ToArray();
+#if __MICROSPLAT_DIGGER__
+            SetupMicroSplatMaterial(diggerSystem, diggerSystem.Terrain.materialTemplate);
+            SetupMicroSplatMaterialSyncEventHandler(diggerSystem);
+            CheckMicroSplatTerrainFeatures(diggerSystem);
+#endif // __MICROSPLAT_DIGGER__
+        }
+
+#if __MICROSPLAT_DIGGER__
+        private static void CheckMicroSplatTerrainFeatures(DiggerSystem diggerSystem)
+        {
+            var microSplat = diggerSystem.Terrain.GetComponent<MicroSplatTerrain>();
+            if (!microSplat) {
+                Debug.LogError($"Could not find MicroSplatTerrain on terrain {diggerSystem.Terrain.name}");
+                return;
+            }
+
+            var needSync = false;
+
+#if !UNITY_2019_3_OR_NEWER
+#if __MICROSPLAT_ALPHAHOLE__ 
+            if (!microSplat.keywordSO.IsKeywordEnabled("_ALPHAHOLETEXTURE")) {
+                microSplat.keywordSO.EnableKeyword("_ALPHAHOLETEXTURE");
+                needSync = true;
+            }
+#else
+            Debug.LogError("MicroSplat Digger integration requires the MicroSplat AlphaHole module unless you use Unity 2019.3+");
+#endif
+#endif
+
+#if __MICROSPLAT_TRIPLANAR__
+            if (!microSplat.keywordSO.IsKeywordEnabled("_TRIPLANAR")) {
+                microSplat.keywordSO.EnableKeyword("_TRIPLANAR");
+                needSync = true;
+            }
+
+            if (microSplat.keywordSO.IsKeywordEnabled("_TRIPLANARLOCALSPACE")) {
+                microSplat.keywordSO.DisableKeyword("_TRIPLANARLOCALSPACE");
+                needSync = true;
+            }
+#else
+            Debug.LogError("MicroSplat Digger integration requires the MicroSplat Triplanar module.");
+#endif
+
+            if (needSync) {
+                microSplat.Sync();
+            }
+        }
+
+        private static void SetupMicroSplatMaterial(DiggerSystem diggerSystem, Material m)
+        {
+            if (!m || !m.shader.name.StartsWith("MicroSplat")) {
+                Debug.LogWarning($"Looks like terrain material doesn\'t match MicroSplat. " +
+                                 $"Expected \'MicroSplat*\', was {m.shader.name}. " +
+                                 $"Please fix this by assigning the right material to the terrain.");
+                return;
+            }
+
+            var microSplat = diggerSystem.Terrain.GetComponent<MicroSplatTerrain>();
+            if (!microSplat) {
+                Debug.LogError($"Could not find MicroSplatTerrain on terrain {diggerSystem.Terrain.name}");
+                return;
+            }
+
+            var microSplatShader = MicroSplatUtilities.GetDiggerShader(microSplat);
+            if (microSplatShader == null) {
+                Debug.LogError($"Could not find MicroSplat Digger shader");
+                return;
+            }
+
+            var material = new Material(microSplatShader);
+            material.CopyPropertiesFromMaterial(m);
+
+            var matPath = Path.Combine(diggerSystem.BasePathData, $"diggerMicroSplat.mat");
+            material = EditorUtils.CreateOrReplaceAsset(material, matPath);
+            AssetDatabase.ImportAsset(matPath, ImportAssetOptions.ForceUpdate);
+            diggerSystem.Materials[0] = material;
+        }
+
+        private static void SetupMicroSplatMaterialSyncEventHandler(DiggerSystem diggerSystem)
+        {
+            var terrain = diggerSystem.Terrain;
+            var microSplat = terrain.GetComponent<MicroSplatTerrain>();
+            if (!microSplat) {
+                Debug.LogError($"Could not find MicroSplatTerrain on terrain {terrain.name}");
+                return;
+            }
+
+            microSplat.OnMaterialSync += material => { SetupMicroSplatMaterial(diggerSystem, material); };
+        }
+#endif // __MICROSPLAT_DIGGER__
+
+        #endregion
+
         #region CTS
 
         private static void SetupCTSMaterial(DiggerSystem diggerSystem)
@@ -350,22 +584,26 @@ namespace Digger
 
             if (diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Basic")) {
                 SetupCTSBasicMaterial(diggerSystem);
-            } else if (diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Advanced Tess")) {
+            } else if (diggerSystem.Terrain.materialTemplate.shader.name.StartsWith(
+                "CTS/CTS Terrain Shader Advanced Tess")) {
                 SetupCTSAdvancedTessMaterial(diggerSystem);
             } else if (diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Advanced")) {
                 SetupCTSAdvancedMaterial(diggerSystem);
             } else {
-                Debug.LogError($"Could not setup CTS material for Digger because terrain shader was not a known CTS shader. Was {diggerSystem.Terrain.materialTemplate.shader.name}");
+                Debug.LogError(
+                    $"Could not setup CTS material for Digger because terrain shader was not a known CTS shader. Was {diggerSystem.Terrain.materialTemplate.shader.name}");
             }
         }
 
         private static void SetupCTSBasicMaterial(DiggerSystem diggerSystem)
         {
-            if (!diggerSystem.Materials[0] || diggerSystem.Materials[0].shader.name != "CTS/CTS Terrain Shader Basic Mesh") {
+            if (!diggerSystem.Materials[0] ||
+                diggerSystem.Materials[0].shader.name != "CTS/CTS Terrain Shader Basic Mesh") {
                 diggerSystem.Materials[0] = new Material(Shader.Find("CTS/CTS Terrain Shader Basic Mesh"));
             }
 
-            if (!diggerSystem.Terrain.materialTemplate || !diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Basic")) {
+            if (!diggerSystem.Terrain.materialTemplate ||
+                !diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Basic")) {
                 Debug.LogWarning($"Looks like terrain material doesn\'t match cave meshes material. " +
                                  $"Expected \'CTS/CTS Terrain Shader Basic CutOut\', was {diggerSystem.Terrain.materialTemplate.shader.name}. " +
                                  $"Please fix this by assigning the right material to the terrain.");
@@ -381,11 +619,13 @@ namespace Digger
 
         private static void SetupCTSAdvancedMaterial(DiggerSystem diggerSystem)
         {
-            if (!diggerSystem.Materials[0] || diggerSystem.Materials[0].shader.name != "CTS/CTS Terrain Shader Advanced Mesh") {
+            if (!diggerSystem.Materials[0] ||
+                diggerSystem.Materials[0].shader.name != "CTS/CTS Terrain Shader Advanced Mesh") {
                 diggerSystem.Materials[0] = new Material(Shader.Find("CTS/CTS Terrain Shader Advanced Mesh"));
             }
 
-            if (!diggerSystem.Terrain.materialTemplate || !diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Advanced")) {
+            if (!diggerSystem.Terrain.materialTemplate ||
+                !diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Advanced")) {
                 Debug.LogWarning($"Looks like terrain material doesn\'t match cave meshes material. " +
                                  $"Expected \'CTS/CTS Terrain Shader Advanced CutOut\', was {diggerSystem.Terrain.materialTemplate.shader.name}. " +
                                  $"Please fix this by assigning the right material to the terrain.");
@@ -401,11 +641,13 @@ namespace Digger
 
         private static void SetupCTSAdvancedTessMaterial(DiggerSystem diggerSystem)
         {
-            if (!diggerSystem.Materials[0] || diggerSystem.Materials[0].shader.name != "CTS/CTS Terrain Shader Advanced Tess Mesh") {
+            if (!diggerSystem.Materials[0] ||
+                diggerSystem.Materials[0].shader.name != "CTS/CTS Terrain Shader Advanced Tess Mesh") {
                 diggerSystem.Materials[0] = new Material(Shader.Find("CTS/CTS Terrain Shader Advanced Tess Mesh"));
             }
 
-            if (!diggerSystem.Terrain.materialTemplate || !diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Advanced Tess")) {
+            if (!diggerSystem.Terrain.materialTemplate ||
+                !diggerSystem.Terrain.materialTemplate.shader.name.StartsWith("CTS/CTS Terrain Shader Advanced Tess")) {
                 Debug.LogWarning($"Looks like terrain material doesn\'t match cave meshes material. " +
                                  $"Expected \'CTS/CTS Terrain Shader Advanced Tess CutOut\', was {diggerSystem.Terrain.materialTemplate.shader.name}. " +
                                  $"Please fix this by assigning the right material to the terrain.");

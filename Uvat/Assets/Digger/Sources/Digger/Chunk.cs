@@ -12,9 +12,7 @@ namespace Digger
     {
         [SerializeField] private DiggerSystem digger;
         [SerializeField] private ChunkLODGroup chunkLodGroup;
-
         [SerializeField] private VoxelChunk voxelChunk;
-
         [SerializeField] private Vector3i chunkPosition;
         [SerializeField] private Vector3i voxelPosition;
         [SerializeField] private Vector3 worldPosition;
@@ -26,8 +24,10 @@ namespace Digger
         public Vector3 WorldPosition => worldPosition;
         public DiggerSystem Digger => digger;
         public bool HasVisualMesh => hasVisualMesh;
-        
+
         internal VoxelChunk VoxelChunk => voxelChunk;
+
+        private bool IsLoaded => voxelChunk != null && voxelChunk.IsLoaded;
 
         internal NavMeshBuildSource NavMeshBuildSource =>
             new NavMeshBuildSource
@@ -59,6 +59,7 @@ namespace Digger
             Material[] materials,
             int layer)
         {
+            Utils.Profiler.BeginSample("CreateChunk");
             var voxelPosition = GetVoxelPosition(digger, chunkPosition);
             var worldPosition = (Vector3) voxelPosition;
             worldPosition.x *= digger.HeightmapScale.x;
@@ -85,6 +86,7 @@ namespace Digger
             chunk.chunkLodGroup = ChunkLODGroup.Create(chunkPosition, chunk, digger, terrain, materials, layer);
             chunk.UpdateStaticEditorFlags();
 
+            Utils.Profiler.EndSample();
             return chunk;
         }
 
@@ -111,12 +113,11 @@ namespace Digger
 
         public void CreateWithoutOperation()
         {
-            for (var lodIndex = 0; lodIndex < chunkLodGroup.LODCount; ++lodIndex)
-            {
+            for (var lodIndex = 0; lodIndex < chunkLodGroup.LODCount; ++lodIndex) {
                 var lod = ChunkLODGroup.IndexToLod(lodIndex);
 #if UNITY_2019_3_OR_NEWER
                 var collisionMesh =
- lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1 ? voxelChunk.BuildVisualMesh(lod) : null;
+                    lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1 ? voxelChunk.BuildVisualMesh(lod) : null;
 #else
                 var collisionMesh = lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1
                     ? voxelChunk.BuildCollisionMesh(lod)
@@ -130,21 +131,21 @@ namespace Digger
         }
 
         public void Modify(BrushType brush, ActionType action, float intensity, Vector3 operationTerrainPosition,
-            float radius, float coneHeight, bool upsideDown, int textureIndex, bool cutDetails)
+            float radius, float coneHeight, bool upsideDown, int textureIndex, bool cutDetails, bool isTargetIntensity)
         {
+            LazyLoad();
             Utils.Profiler.BeginSample("[Dig] Chunk.Modify");
             var center = operationTerrainPosition - worldPosition;
 
             voxelChunk.DoOperation(brush, action, intensity, center, radius, coneHeight, upsideDown, textureIndex,
-                cutDetails);
+                cutDetails, isTargetIntensity);
 
-            for (var lodIndex = 0; lodIndex < chunkLodGroup.LODCount; ++lodIndex)
-            {
+            for (var lodIndex = 0; lodIndex < chunkLodGroup.LODCount; ++lodIndex) {
                 var lod = ChunkLODGroup.IndexToLod(lodIndex);
                 var visualMesh = voxelChunk.BuildVisualMesh(lod);
 #if UNITY_2019_3_OR_NEWER
                 var collisionMesh =
- lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1 ? visualMesh : null;
+                    lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1 ? visualMesh : null;
 #else
                 var collisionMesh = lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1
                     ? voxelChunk.BuildCollisionMesh(lod)
@@ -163,10 +164,8 @@ namespace Digger
         private void EnsureNeededNeighboursExist()
         {
             Utils.Profiler.BeginSample("[Dig] Chunk.EnsureNeededNeighboursExist");
-            foreach (var direction in Vector3i.allDirections)
-            {
-                if (NeedsNeighbour(direction))
-                {
+            foreach (var direction in Vector3i.allDirections) {
+                if (NeedsNeighbour(direction)) {
                     digger.EnsureChunkExists(chunkPosition + direction);
                 }
             }
@@ -202,43 +201,83 @@ namespace Digger
             return true;
         }
 
+#if !UNITY_2019_3_OR_NEWER
         public void UnCutAllVertically()
         {
+            LazyLoad();
             Utils.Profiler.BeginSample("[Dig] Chunk.UnCutAllVertically");
             voxelChunk.UnCutAllVertically();
             Utils.Profiler.EndSample();
         }
-
-
-        public void Load(bool rebuildMeshes)
-        {
-            voxelChunk.Load();
-
-            if (rebuildMeshes)
-            {
-                for (var lodIndex = 0; lodIndex < chunkLodGroup.LODCount; ++lodIndex)
-                {
-                    var lod = ChunkLODGroup.IndexToLod(lodIndex);
-                    var visualMesh = voxelChunk.BuildVisualMesh(lod);
-#if UNITY_2019_3_OR_NEWER
-                    var collisionMesh =
- lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1 ? visualMesh : null;
-#else
-                    var collisionMesh = lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1
-                        ? voxelChunk.BuildCollisionMesh(lod)
-                        : null;
 #endif
 
-                    var res = chunkLodGroup.PostBuild(lodIndex, visualMesh, collisionMesh, voxelChunk.TriggerBounds);
-                    if (lodIndex == 0)
-                        hasVisualMesh = res;
+        public bool LoadVoxels(bool syncVoxelsWithTerrain)
+        {
+            var newVoxelChunk = false;
+            if (!voxelChunk) {
+                voxelChunk = GetComponentInChildren<VoxelChunk>();
+                if (!voxelChunk) {
+                    voxelChunk = VoxelChunk.Create(digger, this);
+                    newVoxelChunk = true;
                 }
+            }
+
+            voxelChunk.Load();
+            if (syncVoxelsWithTerrain) {
+                voxelChunk.RefreshVoxels();
+            }
+
+            return newVoxelChunk;
+        }
+
+        public void RebuildMeshes()
+        {
+            for (var lodIndex = 0; lodIndex < chunkLodGroup.LODCount; ++lodIndex) {
+                var lod = ChunkLODGroup.IndexToLod(lodIndex);
+                var visualMesh = voxelChunk.BuildVisualMesh(lod);
+#if UNITY_2019_3_OR_NEWER
+                    var collisionMesh =
+                        lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1 ? visualMesh : null;
+#else
+                var collisionMesh = lodIndex == digger.ColliderLodIndex || chunkLodGroup.LODCount == 1
+                    ? voxelChunk.BuildCollisionMesh(lod)
+                    : null;
+#endif
+
+                var res = chunkLodGroup.PostBuild(lodIndex, visualMesh, collisionMesh, voxelChunk.TriggerBounds);
+                if (lodIndex == 0)
+                    hasVisualMesh = res;
             }
         }
 
         public static Vector3i GetVoxelPosition(DiggerSystem digger, Vector3i chunkPosition)
         {
             return chunkPosition * digger.SizeOfMesh;
+        }
+
+        internal void PrepareKernelOperation()
+        {
+            LazyLoad();
+            voxelChunk.PrepareKernelOperation();
+        }
+
+        internal void LazyLoad()
+        {
+            if (IsLoaded)
+                return;
+
+            Utils.D.Log($"LazyLoad of {this.name}");
+            if (!voxelChunk) {
+                voxelChunk = GetComponentInChildren<VoxelChunk>();
+                if (!voxelChunk) {
+                    Debug.LogError(
+                        $"VoxelChunk component is missing from Chunk children. Chunk {name} is in incoherent state. " +
+                        "Creating a new VoxelChunk to fix this...");
+                    voxelChunk = VoxelChunk.Create(digger, this);
+                }
+            }
+
+            LoadVoxels(false);
         }
     }
 }

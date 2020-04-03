@@ -15,6 +15,7 @@ namespace Digger
             Material[] materials,
             int layer)
         {
+            Utils.Profiler.BeginSample("ChunkLODGroup.Create");
             var go = new GameObject(GetName(chunkPosition));
             go.layer = layer;
             go.transform.parent = chunk.transform;
@@ -59,6 +60,7 @@ namespace Digger
                 };
             }
 
+            Utils.Profiler.EndSample();
             return chunkLodGroup;
         }
 
