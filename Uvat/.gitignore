@@ -19,6 +19,9 @@
 # Ignore the Library folder
 /Library/*
 
+# Ignore Digger plugin
+/Assets/Digger/*
+
 # Ignore everything Of the scenes...
 /Assets/Scenes/*
 
